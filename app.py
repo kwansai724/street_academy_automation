@@ -5,9 +5,24 @@ from playwright.sync_api import sync_playwright, expect
 import threading
 import os
 
+# --- ★★★★★ ここから設定項目 ★★★★★ ---
+# 認証情報ファイルのパス (このままでOK)
 AUTH_FILE_PATH = 'playwright_auth.json'
 
+# ①：あなたの日程追加ページのURLに書き換えてください
+# 例: 'https://www.street-academy.com/session_details/new_multi_session?classdetailid=123456'
+TARGET_URL = 'https://www.street-academy.com/session_details/new_multi_session?classdetailid=123456'
+
+# ②：あなたの緊急連絡先(電話番号)に書き換えてください
+EMERGENCY_CONTACT = '090-1234-5678' 
+
+# ③：追加したい時間帯 (9時〜22時でよければ変更不要)
+HOURS_TO_ADD = list(range(9, 23)) 
+# --- ★★★★★ 設定項目はここまで ★★★★★ ---
+
+
 def do_login(page_instance: ft.Page, status_text: ft.Text):
+    """ 認証情報ファイルを作成する処理 """
     def update_status(value, color):
         status_text.value = value
         status_text.color = color
@@ -18,21 +33,26 @@ def do_login(page_instance: ft.Page, status_text: ft.Text):
             browser = p.chromium.launch(headless=False)
             context = browser.new_context()
             page = context.new_page()
+            
             page.goto("https://www.street-academy.com/d/users/sign_in")
             update_status("ブラウザでログインしてください...", "black")
+            
             page.wait_for_url("https://www.street-academy.com/dashboard/steachers", timeout=300000)
+            
             context.storage_state(path=AUTH_FILE_PATH)
             browser.close()
+        
         update_status("認証成功！ 'playwright_auth.json' を保存しました。", "green")
     except Exception as e:
         update_status(f"ログインに失敗またはタイムアウトしました: {e}", "red")
 
 def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *args):
+    """Playwrightタスクを別スレッドで実行するための共通ラッパー"""
     def log(message):
         log_text.value += message + "\n"
         page_instance.update()
 
-    log_text.value = ""
+    log_text.value = "" # ログをクリア
     page_instance.update()
 
     try:
@@ -42,8 +62,8 @@ def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *a
         print(f"エラー詳細: {e}")
 
 def add_schedules_logic(log, url, contact, start_str, end_str):
+    """ 日程追加のメインロジック """
     log("日程追加処理を開始します...")
-    HOURS_TO_ADD = list(range(9, 23))
     start_date = date.fromisoformat(start_str)
     end_date = date.fromisoformat(end_str)
     
@@ -90,17 +110,15 @@ def add_schedules_logic(log, url, contact, start_str, end_str):
         log("\nすべての処理が完了しました。")
 
 def delete_schedules_logic(log, start_str, end_str, class_names_str):
-    """ 講座名でフィルタリングして日程を削除する """
+    """ 日程削除のメインロジック """
     log("日程削除処理を開始します...")
     
-    # 入力された講座名をリスト化（改行で区切り、前後の空白を削除）
     target_class_names = [name.strip() for name in class_names_str.strip().split('\n') if name.strip()]
     if not target_class_names:
         log("エラー: 削除対象の講座名が入力されていません。")
         return
 
     log(f"削除対象の講座名: {', '.join(target_class_names)}")
-
     start_date = date.fromisoformat(start_str)
     end_date = date.fromisoformat(end_str)
 
@@ -122,17 +140,19 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
                 page.goto(daily_schedule_url, timeout=60000)
                 page.wait_for_load_state('networkidle')
                 
-                # 削除対象の講座名に一致するリンクのみをフィルタリング
                 all_schedule_links = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
+                
+                if all_schedule_links.count() == 0:
+                    log("この日付に削除対象の講座はありません。")
+                    break
                 
                 target_link = None
                 for i in range(all_schedule_links.count()):
                     link = all_schedule_links.nth(i)
                     link_text = link.inner_text()
-                    # リンク内のテキストに、指定された講座名のいずれかが含まれているかチェック
                     if any(class_name in link_text for class_name in target_class_names):
                         target_link = link
-                        break # 最初に見つかったものを対象とする
+                        break
 
                 if target_link is None:
                     log("この日付に削除対象の講座はありません。")
@@ -159,7 +179,6 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
         browser.close()
         log("\nすべての処理が完了しました。")
 
-
 def daterange(start_date, end_date):
     for n in range(int((end_date - start_date).days) + 1):
         yield start_date + timedelta(n)
@@ -177,7 +196,7 @@ def main(page: ft.Page):
             return "未認証 (最初にログインを実行してください)", "red"
 
     def run_in_thread(target_func, *args):
-        thread = threading.Thread(target=run_playwright_task, args=(page, log_view, target_func, *args), daemon=True)
+        thread = threading.Thread(target=target_func, args=args, daemon=True)
         thread.start()
 
     initial_text, initial_color = check_auth_status()
@@ -190,19 +209,19 @@ def main(page: ft.Page):
     login_button = ft.ElevatedButton("ログイン / 認証情報を作成 (初回のみ)", on_click=handle_login)
 
     # 日程追加用UI
-    url_input = ft.TextField(label="日程追加ページのURL", value="https://www.street-academy.com/session_details/new_multi_session?classdetailid=123456", width=500)
-    contact_input = ft.TextField(label="緊急連絡先", value="090-1234-5678", width=300)
+    url_input = ft.TextField(label="日程追加ページのURL", value=TARGET_URL, width=600)
+    contact_input = ft.TextField(label="緊急連絡先", value=EMERGENCY_CONTACT, width=300)
     add_start_date = ft.TextField(label="開始日 (YYYY-MM-DD)", width=200)
     add_end_date = ft.TextField(label="終了日 (YYYY-MM-DD)", width=200)
     
     def handle_add_schedules(e):
-        run_in_thread(add_schedules_logic, url_input.value, contact_input.value, add_start_date.value, add_end_date.value)
+        run_in_thread(run_playwright_task, page, log_view, add_schedules_logic, url_input.value, contact_input.value, add_start_date.value, add_end_date.value)
 
     add_button = ft.ElevatedButton("日程を追加", on_click=handle_add_schedules, bgcolor="blue", color="white")
 
+    # 日程削除用UI
     delete_start_date = ft.TextField(label="開始日 (YYYY-MM-DD)", width=200)
     delete_end_date = ft.TextField(label="終了日 (YYYY-MM-DD)", width=200)
-    # 講座名を入力するテキストエリアを追加
     class_names_input = ft.TextField(
         label="削除対象の講座名 (複数ある場合は改行して入力)",
         multiline=True,
@@ -211,7 +230,7 @@ def main(page: ft.Page):
     )
     
     def handle_delete_schedules(e):
-        run_in_thread(delete_schedules_logic, delete_start_date.value, delete_end_date.value, class_names_input.value)
+        run_in_thread(run_playwright_task, page, log_view, delete_schedules_logic, delete_start_date.value, delete_end_date.value, class_names_input.value)
     
     delete_button = ft.ElevatedButton("指定した講座の日程を削除", on_click=handle_delete_schedules, bgcolor="red", color="white")
 
@@ -224,7 +243,6 @@ def main(page: ft.Page):
         expand=True,
     )
     
-    # ページ全体のレイアウト
     page.add(
         ft.Column([
             ft.Row([login_button, auth_status_text], alignment=ft.MainAxisAlignment.START),

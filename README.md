@@ -1,146 +1,106 @@
-## 【完全版】ストアカ日程追加・削除 自動化スクリプト 導入マニュアル
+# ストアカ日程追加・削除 自動化ツール
 
-このマニュアルは、面倒なストアカの講座日程の追加・削除作業をPythonスクリプトで自動化するための手順書です。
+面倒なストアカの講座日程の「一括追加」と「指定講座の一括削除」を、クリック操作で簡単に行うためのツールです。
 
-### 全体の流れ
+## 機能
+*   **日程の追加**: 指定した期間、毎日決まった時間帯（例: 9時〜22時）の日程をまとめて作成します。
+*   **日程の削除**: 指定した期間と講座名に一致する日程だけを、まとめて削除します。
 
-1.  **【事前準備】必要なツールをインストールする**
-    *   お使いのMacに開発ツールやPythonがインストールされているかを確認し、なければインストールします。
-2.  **【初回のみ】認証情報ファイルを作成する**
-    *   スクリプトがあなたの代わりにログインするための「鍵」となるファイルを作成します。
-3.  **【設定】スクリプトを自分の講座用に設定する**
-    *   あなたの講座情報に合わせて、日程追加スクリプトの一部を書き換えます。
-4.  **【実行】自動化スクリプトを動かす**
-    *   コマンド一つで、日程の追加または削除を行います。
+## 導入手順
+
+### 1. 【事前準備】 必要なツールのインストール
+
+お使いのPCにPythonと関連ツールをインストールします。お使いのOS（MacまたはWindows）に合わせて手順を実行してください。
 
 ---
+#### <img src="https://www.apple.com/favicon.ico" width="16"> Macユーザー向け手順
 
-### ステップ1：【事前準備】必要なツールのインストール
-
-お使いのMacに、Pythonと自動化ライブラリをインストールします。
-
-#### 1-1. Homebrewのインストール確認と実行
+##### 1-1. Homebrewのインストール確認と実行
 Mac用のパッケージ管理ツール「Homebrew」を準備します。
 
-まず、ターミナルを開き、以下のコマンドでHomebrewがインストール済みか確認します。
-```bash
+まず、**ターミナル**を開き、以下のコマンドでHomebrewがインストール済みか確認します。
+```sh
 command -v brew
 ```
-*   `/opt/homebrew/bin/brew` のようなパスが表示されれば、**インストール済み**です。次の「1-2. Pythonのインストール確認」に進んでください。
+*   `/opt/homebrew/bin/brew` のようなパスが表示されれば、**インストール済み**です。次の手順に進んでください。
 *   何も表示されなければ、**未インストール**です。以下のコマンドを貼り付けて実行し、Homebrewをインストールしてください。
-    ```bash
+    ```sh
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     ```
 
-#### 1-2. Pythonのインストール確認と実行
+##### 1-2. Pythonのインストール
 次に、Homebrewを使ってPythonをインストールします。
-
-まず、ターミナルでPythonがインストール済みか確認します。
-```bash
-python3 --version
+```sh
+brew install python3
 ```
-*   `Python 3.x.x` のようにバージョンが表示されれば、**インストール済み**です。次の「1-3. プロジェクトフォルダの準備」に進んでください。
-*   `command not found` のようなエラーが出れば、**未インストール**です。以下のコマンドでPythonをインストールしてください。
-    ```bash
-    brew install python3
-    ```
-    完了したら、ターミナルを一度完全に終了し、再起動してください。
+完了したら、ターミナルを一度完全に終了し、再起動してください。
 
-#### 1-3. プロジェクトフォルダの準備
+##### 1-3. プロジェクトフォルダの準備と移動
 作業用のフォルダを作成し、そこに移動します。
-```bash
+```sh
 # 例: デスクトップにフォルダを作成
 mkdir stoc-aca-automation
 cd stoc-aca-automation
 ```
+---
+#### <img src="https://www.microsoft.com/favicon.ico" width="16"> Windowsユーザー向け手順
 
-#### 1-4. 仮想環境の作成と有効化
-プロジェクト専用のクリーンな環境を作ります。
-```bash
-# 仮想環境を作成 (フォルダ内で初回のみ)
-python3 -m venv .venv
+##### 1-1. Pythonのインストール
+1.  [Python公式サイトのダウンロードページ](https://www.python.org/downloads/)にアクセスします。
+2.  「Download Python 3.x.x」ボタンをクリックしてインストーラーをダウンロードします。
+3.  インストーラーを起動し、**必ず「Add Python 3.x to PATH」のチェックボックスにチェックを入れてから**、「Install Now」をクリックします。
 
-# 仮想環境を有効化 (このフォルダで作業する際は毎回実行)
-source .venv/bin/activate
+    ![Python for Windows Installer](https://docs.python.org/3/_images/win_installer.png)
+
+##### 1-2. プロジェクトフォルダの準備と移動
+作業用のフォルダを作成し、そこに移動します。**コマンドプロンプト**または**PowerShell**を開いて実行してください。
+```powershell
+# 例: デスクトップにフォルダを作成
+cd ~/Desktop
+mkdir stoc-aca-automation
+cd stoc-aca-automation
 ```
-ターミナルの行頭に `(.venv)` と表示されれば、仮想環境が有効化された状態です。
+---
+#### 1-4. 仮想環境の作成と有効化 (Mac / Windows共通)
 
-#### 1-5. Playwrightのインストール
+プロジェクト専用のクリーンな環境を作ります。これ以降のコマンドは、Macは**ターミナル**、Windowsは**コマンドプロンプト**で実行します。
+
+① **仮想環境の作成** (フォルダ内で初回のみ)
+```sh
+# Mac / Windows 共通
+python -m venv .venv
+```
+
+② **仮想環境の有効化** (このフォルダで作業する際は毎回実行)
+*   **Mac の場合:**
+    ```sh
+    source .venv/bin/activate
+    ```
+*   **Windows の場合:**
+    ```powershell
+    .\.venv\Scripts\activate
+    ```
+実行後、コマンドプロンプトの行頭に `(.venv)` と表示されればOKです。
+
+#### 1-5. 必要なライブラリのインストール (Mac / Windows共通)
 仮想環境が有効な状態で、自動化に必要なライブラリとブラウザをインストールします。
-```bash
-# ライブラリのインストール
-pip install playwright
-
-# 自動操作用のブラウザをインストール
+```sh
+# Mac / Windows 共通
+pip install flet playwright
 playwright install
 ```
 
----
+### 2. 【ファイル作成】 `app.py` ファイルを用意する
 
-### ステップ2：【初回のみ】認証情報ファイルを作成する
+先ほど作成した`stoc-aca-automation`フォルダ内に、`app.py` という名前でファイルを作成し、以下の内容を**すべて**コピー＆ペーストして保存してください。
 
-スクリプトにログイン操作を代行させるための「認証情報ファイル」を作成します。この作業は**一番最初に一度だけ**行います。
-
-#### 2-1. 認証スクリプトの作成
-`stoc-aca-automation`フォルダ内に、`save_auth.py` という名前でファイルを作成し、以下の内容を貼り付けます。
-
-**`save_auth.py`**
 ```python
-from playwright.sync_api import sync_playwright, expect
-
-AUTH_FILE_PATH = 'playwright_auth.json'
-# ストアカのログインページURL
-LOGIN_PAGE_URL = "https://www.street-academy.com/d/users/sign_in"
-# ログイン成功後に遷移する先生用ダッシュボードのURL
-LOGIN_SUCCESS_URL = "https://www.street-academy.com/dashboard/steachers" 
-
-with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False)
-    context = browser.new_context()
-    page = context.new_page()
-    
-    print(f"ストアカのログインページを開きます: {LOGIN_PAGE_URL}")
-    page.goto(LOGIN_PAGE_URL)
-    
-    print("\nブラウザ上で手動でログインしてください。")
-    print(f"ログイン後、'{LOGIN_SUCCESS_URL}' に遷移すると自動的に終了します。")
-    
-    try:
-        expect(page).to_have_url(LOGIN_SUCCESS_URL, timeout=300000) # 5分待機
-        print("\nログインを検知しました。")
-    except Exception as e:
-        print(f"\nログインがタイムアウトまたは検知できませんでした: {e}")
-        browser.close()
-        exit()
-
-    context.storage_state(path=AUTH_FILE_PATH)
-    print(f"認証情報を {AUTH_FILE_PATH} に保存しました。")
-    browser.close()
-```
-
-#### 2-2. 認証スクリプトの実行
-ターミナルで以下のコマンドを実行します。
-```bash
-# 仮想環境が有効なことを確認 (.venv が表示されているか)
-python save_auth.py
-```
-するとブラウザが起動するので、**手動でストアカにログイン**してください。ログインが完了すると、プログラムは自動で終了し、フォルダ内に`playwright_auth.json`ファイルが作成されます。
-
----
-
-### ステップ3：【設定】スクリプトの準備と設定
-
-自動化で使う2つのスクリプト（追加用と削除用）を作成・設定します。
-
-#### 3-1. 日程「追加」スクリプトの作成
-`stoc-aca-automation`フォルダ内に、`main.py` という名前でファイルを作成し、以下の内容を貼り付けます。
-
-**`main.py`**
-```python
-import sys
+import flet as ft
 import time
 from datetime import date, timedelta
 from playwright.sync_api import sync_playwright, expect
+import threading
+import os
 
 # --- ★★★★★ ここから設定項目 ★★★★★ ---
 # 認証情報ファイルのパス (このままでOK)
@@ -158,206 +118,279 @@ HOURS_TO_ADD = list(range(9, 23))
 # --- ★★★★★ 設定項目はここまで ★★★★★ ---
 
 
-def daterange(start_date, end_date):
-    for n in range(int((end_date - start_date).days) + 1):
-        yield start_date + timedelta(n)
+def do_login(page_instance: ft.Page, status_text: ft.Text):
+    """ 認証情報ファイルを作成する処理 """
+    def update_status(value, color):
+        status_text.value = value
+        status_text.color = color
+        page_instance.update()
 
-def add_schedule_for_day(page, target_date):
-    print(f"\n--- {target_date.strftime('%Y-%m-%d')} の日程を追加します ---")
-    first_block = page.locator('div[data-repeater-item]').first
-    
-    print("最初の日付を設定中...")
-    first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(target_date.year))
-    first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(target_date.month))
-    first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(target_date.day))
-    
-    start_hour = HOURS_TO_ADD[0]
-    end_hour = start_hour + 1
-    first_block.locator('select.js_start_time_hour').select_option(str(start_hour))
-    first_block.locator('select.js_end_time_hour').select_option(str(end_hour))
-    print(f"{start_hour}:00 - {end_hour}:00 の日程を設定しました。")
-    time.sleep(0.5)
-
-    for hour in HOURS_TO_ADD[1:]:
-        print(f"{hour}時の日程を追加します...")
-        page.get_by_role("button", name="日程を複製する").click()
-        last_block = page.locator('div[data-repeater-item]').last
-        expect(last_block).to_be_visible()
-        
-        start_hour = hour
-        end_hour = start_hour + 1 if start_hour < 23 else 23
-        last_block.locator('select.js_start_time_hour').select_option(str(start_hour))
-        last_block.locator('select.js_end_time_hour').select_option(str(end_hour))
-        print(f"{start_hour}:00 - {end_hour}:00 の日程を設定しました。")
-
-def run(start_date_str, end_date_str):
     try:
-        start_date = date.fromisoformat(start_date_str)
-        end_date = date.fromisoformat(end_date_str)
-    except ValueError:
-        print("エラー: 日付の形式が正しくありません。YYYY-MM-DD形式で指定してください。")
-        return
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+            
+            page.goto("https://www.street-academy.com/d/users/sign_in")
+            update_status("ブラウザでログインしてください...", "black")
+            
+            page.wait_for_url("https://www.street-academy.com/dashboard/steachers", timeout=300000)
+            
+            context.storage_state(path=AUTH_FILE_PATH)
+            browser.close()
+        
+        update_status("認証成功！ 'playwright_auth.json' を保存しました。", "green")
+    except Exception as e:
+        update_status(f"ログインに失敗またはタイムアウトしました: {e}", "red")
 
+def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *args):
+    """Playwrightタスクを別スレッドで実行するための共通ラッパー"""
+    def log(message):
+        log_text.value += message + "\n"
+        page_instance.update()
+
+    log_text.value = "" # ログをクリア
+    page_instance.update()
+
+    try:
+        task_func(log, *args)
+    except Exception as e:
+        log(f"予期せぬエラーが発生しました: {e}")
+        print(f"エラー詳細: {e}")
+
+def add_schedules_logic(log, url, contact, start_str, end_str):
+    """ 日程追加のメインロジック """
+    log("日程追加処理を開始します...")
+    start_date = date.fromisoformat(start_str)
+    end_date = date.fromisoformat(end_str)
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
+        if not os.path.exists(AUTH_FILE_PATH):
+            log("エラー: 認証ファイル 'playwright_auth.json' が見つかりません。")
+            return
         context = browser.new_context(storage_state=AUTH_FILE_PATH)
         page = context.new_page()
 
         for single_date in daterange(start_date, end_date):
-            print(f"ページにアクセスします: {TARGET_URL}")
-            page.goto(TARGET_URL)
-            print("ページが読み込まれるのを待っています...")
+            log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程を追加します ---")
+            page.goto(url)
             expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
-            print("ページの読み込みが完了しました。")
             
-            add_schedule_for_day(page, single_date)
+            first_block = page.locator('div[data-repeater-item]').first
+            first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(single_date.year))
+            first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(single_date.month))
+            first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(single_date.day))
+            first_block.locator('select.js_start_time_hour').select_option(str(HOURS_TO_ADD[0]))
+            first_block.locator('select.js_end_time_hour').select_option(str(HOURS_TO_ADD[0] + 1))
+            log(f"{HOURS_TO_ADD[0]}:00 - {HOURS_TO_ADD[0]+1}:00 の日程を設定しました。")
 
-            print("\n緊急連絡先を入力します...")
-            page.locator("#session_detail_multi_form_emergency_contact").fill(EMERGENCY_CONTACT)
-            
-            print("プレビュー画面へ進みます...")
+            for hour in HOURS_TO_ADD[1:]:
+                page.get_by_role("button", name="日程を複製する").click()
+                last_block = page.locator('div[data-repeater-item]').last
+                expect(last_block).to_be_visible()
+                end_hour = hour + 1 if hour < 23 else 23
+                last_block.locator('select.js_start_time_hour').select_option(str(hour))
+                last_block.locator('select.js_end_time_hour').select_option(str(end_hour))
+                log(f"{hour}:00 - {end_hour}:00 の日程を設定しました。")
+
+            page.locator("#session_detail_multi_form_emergency_contact").fill(contact)
             page.get_by_role("button", name="プレビュー画面で確認").click()
-            
-            print("内容を確定します...")
             confirm_button = page.get_by_role("button", name="確定")
             expect(confirm_button).to_be_visible(timeout=15000)
             confirm_button.click()
-
-            print("完了メッセージを待っています...")
             expect(page.get_by_text("講座の予約受付が開始されました！")).to_be_visible(timeout=20000)
-            print(f"--- {single_date.strftime('%Y-%m-%d')} の日程追加が完了しました！ ---")
+            log(f"--- {single_date.strftime('%Y-%m-%d')} の日程追加が完了しました！ ---")
             time.sleep(3)
-
-        print("\nすべての指定された期間の日程追加が完了しました。")
+        
         browser.close()
+        log("\nすべての処理が完了しました。")
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("使い方: python main.py YYYY-MM-DD YYYY-MM-DD")
-        sys.exit(1)
-    start_date_arg = sys.argv[1]
-    end_date_arg = sys.argv[2]
-    run(start_date_arg, end_date_arg)
-```
-**【重要】** 作成した`main.py`を開き、先頭部分の**設定項目（`TARGET_URL`と`EMERGENCY_CONTACT`）**を自分の情報に必ず書き換えてください。
-
-#### 3-2. 日程「削除」スクリプトの作成
-`stoc-aca-automation`フォルダ内に、`delete_schedules.py` という名前でファイルを作成し、以下の内容を貼り付けます。
-（このスクリプトは特に設定を変更する必要はありません）
-
-**`delete_schedules.py`**
-```python
-import sys
-import time
-from datetime import date, timedelta
-from playwright.sync_api import sync_playwright, expect
-
-# --- 設定項目 (認証ファイルのみ) ---
-AUTH_FILE_PATH = 'playwright_auth.json'
-
-def daterange(start_date, end_date):
-    for n in range(int((end_date - start_date).days) + 1):
-        yield start_date + timedelta(n)
-
-def run(start_date_str, end_date_str):
-    try:
-        start_date = date.fromisoformat(start_date_str)
-        end_date = date.fromisoformat(end_date_str)
-    except ValueError:
-        print("エラー: 日付の形式が正しくありません。YYYY-MM-DD形式で指定してください。")
+def delete_schedules_logic(log, start_str, end_str, class_names_str):
+    """ 日程削除のメインロジック """
+    log("日程削除処理を開始します...")
+    
+    target_class_names = [name.strip() for name in class_names_str.strip().split('\n') if name.strip()]
+    if not target_class_names:
+        log("エラー: 削除対象の講座名が入力されていません。")
         return
+
+    log(f"削除対象の講座名: {', '.join(target_class_names)}")
+    start_date = date.fromisoformat(start_str)
+    end_date = date.fromisoformat(end_str)
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
+        if not os.path.exists(AUTH_FILE_PATH):
+            log("エラー: 認証ファイル 'playwright_auth.json' が見つかりません。")
+            return
         context = browser.new_context(storage_state=AUTH_FILE_PATH)
         page = context.new_page()
 
         for single_date in daterange(start_date, end_date):
             date_param = single_date.strftime('%Y-%-m-%-d')
             daily_schedule_url = f"https://www.street-academy.com/dashboard/steachers/manage_class_dates?date={date_param}"
-            
-            print(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程削除を開始します ---")
-            
+            log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程削除を開始します ---")
+
             while True:
-                print(f"日程一覧にアクセス中: {daily_schedule_url}")
+                log(f"アクセス中: {daily_schedule_url}")
                 page.goto(daily_schedule_url, timeout=60000)
                 page.wait_for_load_state('networkidle')
                 
-                schedule_links = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
+                all_schedule_links = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
                 
-                if schedule_links.count() == 0:
-                    no_schedule_text = page.locator("text=講座がありません")
-                    if no_schedule_text.is_visible():
-                        print("「講座がありません」と表示されています。")
-                    else:
-                        print("削除可能な日程は見つかりませんでした。")
-                    print(f"{single_date.strftime('%Y-%m-%d')} の処理を終了します。")
+                if all_schedule_links.count() == 0:
+                    log("この日付に削除対象の講座はありません。")
                     break
                 
-                first_schedule_text = schedule_links.first.inner_text()
-                print(f"  - 削除対象: {first_schedule_text.strip().replace('\n', ' ')}")
-                
-                schedule_links.first.click()
+                target_link = None
+                for i in range(all_schedule_links.count()):
+                    link = all_schedule_links.nth(i)
+                    link_text = link.inner_text()
+                    if any(class_name in link_text for class_name in target_class_names):
+                        target_link = link
+                        break
 
+                if target_link is None:
+                    log("この日付に削除対象の講座はありません。")
+                    break
+                
+                target_text = target_link.inner_text()
+                log(f"  - 削除対象: {target_text.strip().replace('\n', ' ')}")
+                
+                target_link.click()
+                
                 cancel_button_1 = page.get_by_role("link", name="開催をキャンセルする")
-                expect(cancel_button_1).to_be_visible(timeout=15000)
+                expect(cancel_button_1).to_be_visible()
                 cancel_button_1.click()
                 
                 modal_cancel_button = page.locator("#sa-modal-cancel").get_by_role("button", name="開催キャンセル")
                 expect(modal_cancel_button).to_be_visible()
-
+                
                 page.once("dialog", lambda dialog: dialog.accept())
                 modal_cancel_button.click()
-
-                print("  - キャンセル処理を実行しました。次の処理に進みます。")
+                
+                log("  - キャンセル処理を実行しました。")
                 time.sleep(3)
-
-        print("\nすべての指定された期間の日程削除が完了しました。")
+        
         browser.close()
+        log("\nすべての処理が完了しました。")
+
+def daterange(start_date, end_date):
+    for n in range(int((end_date - start_date).days) + 1):
+        yield start_date + timedelta(n)
+
+def main(page: ft.Page):
+    page.title = "ストアカ日程自動化ツール"
+    page.vertical_alignment = ft.MainAxisAlignment.START
+    page.window_width = 700
+    page.window_height = 800
+
+    def check_auth_status():
+        if os.path.exists(AUTH_FILE_PATH):
+            return "認証済み", "green"
+        else:
+            return "未認証 (最初にログインを実行してください)", "red"
+
+    def run_in_thread(target_func, *args):
+        thread = threading.Thread(target=target_func, args=args, daemon=True)
+        thread.start()
+
+    initial_text, initial_color = check_auth_status()
+    auth_status_text = ft.Text(value=initial_text, color=initial_color)
+    
+    def handle_login(e):
+        thread = threading.Thread(target=do_login, args=(page, auth_status_text), daemon=True)
+        thread.start()
+    
+    login_button = ft.ElevatedButton("ログイン / 認証情報を作成 (初回のみ)", on_click=handle_login)
+
+    # 日程追加用UI
+    url_input = ft.TextField(label="日程追加ページのURL", value=TARGET_URL, width=600)
+    contact_input = ft.TextField(label="緊急連絡先", value=EMERGENCY_CONTACT, width=300)
+    add_start_date = ft.TextField(label="開始日 (YYYY-MM-DD)", width=200)
+    add_end_date = ft.TextField(label="終了日 (YYYY-MM-DD)", width=200)
+    
+    def handle_add_schedules(e):
+        run_in_thread(run_playwright_task, page, log_view, add_schedules_logic, url_input.value, contact_input.value, add_start_date.value, add_end_date.value)
+
+    add_button = ft.ElevatedButton("日程を追加", on_click=handle_add_schedules, bgcolor="blue", color="white")
+
+    # 日程削除用UI
+    delete_start_date = ft.TextField(label="開始日 (YYYY-MM-DD)", width=200)
+    delete_end_date = ft.TextField(label="終了日 (YYYY-MM-DD)", width=200)
+    class_names_input = ft.TextField(
+        label="削除対象の講座名 (複数ある場合は改行して入力)",
+        multiline=True,
+        min_lines=3,
+        hint_text="例:\nNotebookLMに資料投入！\nAIとGASで夢の時短術！"
+    )
+    
+    def handle_delete_schedules(e):
+        run_in_thread(run_playwright_task, page, log_view, delete_schedules_logic, delete_start_date.value, delete_end_date.value, class_names_input.value)
+    
+    delete_button = ft.ElevatedButton("指定した講座の日程を削除", on_click=handle_delete_schedules, bgcolor="red", color="white")
+
+    # ログ表示用UI
+    log_view = ft.Text("", selectable=True, font_family="monospace", size=12)
+    log_container = ft.Container(
+        content=ft.Column([log_view], scroll=ft.ScrollMode.ADAPTIVE, expand=True),
+        border=ft.border.all(1, "grey"),
+        padding=10,
+        expand=True,
+    )
+    
+    page.add(
+        ft.Column([
+            ft.Row([login_button, auth_status_text], alignment=ft.MainAxisAlignment.START),
+            ft.Divider(),
+            ft.Text("日程の追加", size=20, weight=ft.FontWeight.BOLD),
+            url_input,
+            contact_input,
+            ft.Row([add_start_date, add_end_date]),
+            add_button,
+            ft.Divider(),
+            ft.Text("日程の削除", size=20, weight=ft.FontWeight.BOLD),
+            class_names_input,
+            ft.Row([delete_start_date, delete_end_date]),
+            delete_button,
+            ft.Divider(),
+            ft.Text("実行ログ", size=16),
+            log_container
+        ], expand=True, scroll=ft.ScrollMode.ADAPTIVE)
+    )
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("使い方: python delete_schedules.py YYYY-MM-DD YYYY-MM-DD")
-        sys.exit(1)
-    
-    start_date_arg = sys.argv[1]
-    end_date_arg = sys.argv[2]
-    run(start_date_arg, end_date_arg)
+    ft.app(target=main)
 ```
+
+**【重要】** 作成した`app.py`を開き、先頭部分の**設定項目（`TARGET_URL`と`EMERGENCY_CONTACT`）**を自分の情報に必ず書き換えてください。
 
 ---
 
-### ステップ4：【実行】自動化スクリプトを動かす
+### ステップ3：【初回のみ】認証情報ファイルを作成する
 
-設定が完了したら、いつでもスクリプトを実行できます。
+1.  **仮想環境を有効化**します。
+2.  `python app.py` を実行してツールを起動します。
+3.  ウィンドウが表示されたら、一番上にある**「ログイン / 認証情報を作成 (初回のみ)」**ボタンをクリックします。
+4.  ブラウザが起動するので、**手動でストアカにログイン**してください。
+5.  ログインが完了すると、ブラウザは自動で閉じ、ツール画面の「未認証」という表示が**「認証済み」**に変わります。これで認証は完了です。
 
-1.  ターミナルで`stoc-aca-automation`フォルダにいることを確認します。
-2.  仮想環境を有効化します。（もし無効になっていたら）
-    ```bash
-    source .venv/bin/activate
-    ```
-3.  実行したい処理に合わせて、以下のコマンドを実行します。
+---
 
-#### ■ 日程を追加する場合
-`python main.py`コマンドに続けて、**追加したい期間の開始日**と**終了日**を `YYYY-MM-DD` 形式で指定します。
-```bash
-# 2025年10月10日の1日だけ追加する場合
-python main.py 2025-10-10 2025-10-10
+### ステップ4：【実行】自動化ツールを動かす
 
-# 2025年11月1日から11月7日まで追加する場合
-python main.py 2025-11-01 2025-11-07
-```
+1.  `python app.py` でツールを起動します（仮想環境の有効化を忘れずに）。
+2.  **日程を追加する場合**:
+    *   **「日程追加ページのURL」**と**「緊急連絡先」**が正しいか確認・修正します。
+    *   追加したい**「開始日」**と**「終了日」**を`YYYY-MM-DD`形式で入力します。
+    *   **「日程を追加」**ボタンをクリックします。
+3.  **日程を削除する場合**:
+    *   **削除したい「講座名」**をテキストエリアに1行ずつ入力します。
+    *   削除したい**「開始日」**と**「終了日」**を入力します。
+    *   **「指定した講座の日程を削除」**ボタンをクリックします。
 
-#### ■ 日程を削除する場合
-**【注意】削除した日程は元に戻せません。日付をよく確認して慎重に実行してください。**
-`python delete_schedules.py`コマンドに続けて、**削除したい期間の開始日**と**終了日**を指定します。
-```bash
-# 2025年9月2日の日程をすべて削除する場合
-python delete_schedules.py 2025-09-02 2025-09-02
-
-# 2025年12月20日から12月25日までの日程をすべて削除する場合
-python delete_schedules.py 2025-12-20 2025-12-25
-```
+実行すると、ブラウザが自動で立ち上がり、処理が開始されます。下部の「実行ログ」に進捗が表示されます。
 
 ---
 
@@ -365,6 +398,6 @@ python delete_schedules.py 2025-12-20 2025-12-25
 
 すべての作業が終わった後、ターミナルの行頭にある `(.venv)` の表示を消して元の状態に戻したい場合は、以下のコマンドを実行します。
 
-```bash
+```sh
 deactivate
 ```
