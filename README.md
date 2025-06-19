@@ -39,8 +39,8 @@ brew install python3
 作業用のフォルダを作成し、そこに移動します。
 ```sh
 # 例: デスクトップにフォルダを作成
-mkdir stoc-aca-automation
-cd stoc-aca-automation
+mkdir street_academy_automation
+cd street_academy_automation
 ```
 ---
 #### <img src="https://www.microsoft.com/favicon.ico" width="16"> Windowsユーザー向け手順
@@ -57,8 +57,8 @@ cd stoc-aca-automation
 ```powershell
 # 例: デスクトップにフォルダを作成
 cd ~/Desktop
-mkdir stoc-aca-automation
-cd stoc-aca-automation
+mkdir street_academy_automation
+cd street_academy_automation
 ```
 ---
 #### 1-4. 仮想環境の作成と有効化 (Mac / Windows共通)
@@ -92,7 +92,7 @@ playwright install
 
 ### 2. 【ファイル作成】 `app.py` ファイルを用意する
 
-先ほど作成した`stoc-aca-automation`フォルダ内に、`app.py` という名前でファイルを作成し、以下の内容を**すべて**コピー＆ペーストして保存してください。
+先ほど作成した`street_academy_automation`フォルダ内に、`app.py` という名前でファイルを作成し、以下の内容を**すべて**コピー＆ペーストして保存してください。
 
 ```python
 import flet as ft
