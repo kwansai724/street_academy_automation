@@ -28,12 +28,19 @@ command -v brew
     /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     ```
 
-##### 1-2. Pythonのインストール
+##### 1-2. Pythonのインストール確認と実行
 次に、Homebrewを使ってPythonをインストールします。
-```sh
-brew install python3
+
+まず、ターミナルでPythonがインストール済みか確認します。
+```bash
+python3 --version
 ```
-完了したら、ターミナルを一度完全に終了し、再起動してください。
+*   `Python 3.x.x` のようにバージョンが表示されれば、**インストール済み**です。次の「1-3. プロジェクトフォルダの準備」に進んでください。
+*   `command not found` のようなエラーが出れば、**未インストール**です。以下のコマンドでPythonをインストールしてください。
+    ```bash
+    brew install python3
+    ```
+    完了したら、ターミナルを一度完全に終了し、再起動してください。
 
 ##### 1-3. プロジェクトフォルダの準備と移動
 作業用のフォルダを作成し、そこに移動します。
@@ -45,7 +52,14 @@ cd street_academy_automation
 ---
 #### <img src="https://www.microsoft.com/favicon.ico" width="16"> Windowsユーザー向け手順
 
-##### 1-1. Pythonのインストール
+##### 1-1. Pythonのインストール確認と実行
+まず、コマンドプロンプトまたはPowerShellでPythonがインストール済みか確認します。
+```powershell
+python --version
+```
+*   `Python 3.x.x` のようにバージョンが表示されれば、**インストール済み**です。次の「1-2. プロジェクトフォルダの準備」に進んでください。
+*   `python は、内部コマンドまたは外部コマンド...` などのエラーが出れば、**未インストール**です。以下の手順でPythonをインストールしてください。
+
 1.  [Python公式サイトのダウンロードページ](https://www.python.org/downloads/)にアクセスします。
 2.  「Download Python 3.x.x」ボタンをクリックしてインストーラーをダウンロードします。
 3.  インストーラーを起動し、**必ず「Add Python 3.x to PATH」のチェックボックスにチェックを入れてから**、「Install Now」をクリックします。
