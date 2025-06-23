@@ -440,7 +440,7 @@ deactivate
         .\.venv\Scripts\activate
         ```
 4.  ツールを起動します。
-    *   **Mac の場合:** `python3 app.py`
+    *   **Mac の場合:** `python app.py`
     *   **Windows の場合:** `python app.py`
 
 ### ステップ2：日程の追加または削除
