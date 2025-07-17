@@ -5,7 +5,6 @@ from playwright.sync_api import sync_playwright, expect
 import threading
 import os
 
-# --- ★★★★★ ここから設定項目 ★★★★★ ---
 # 認証情報ファイルのパス (このままでOK)
 AUTH_FILE_PATH = 'playwright_auth.json'
 
@@ -18,7 +17,6 @@ EMERGENCY_CONTACT = '090-1234-5678'
 
 # ③：追加したい時間帯 (8時〜22時でよければ変更不要)
 HOURS_TO_ADD = list(range(8, 23)) 
-# --- ★★★★★ 設定項目はここまで ★★★★★ ---
 
 
 def do_login(page_instance: ft.Page, status_text: ft.Text):
@@ -52,7 +50,7 @@ def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *a
         log_text.value += message + "\n"
         page_instance.update()
 
-    log_text.value = "" # ログをクリア
+    log_text.value = ""
     page_instance.update()
 
     try:
@@ -79,6 +77,16 @@ def add_schedules_logic(log, url, contact, start_str, end_str):
             log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程を追加します ---")
             page.goto(url)
             expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
+
+            # 「オンライン」のラジオボタンをIDで特定
+            online_radio_button = page.locator("#is_online_check")
+            
+            # ラジオボタンが表示されているか（=対面/オンラインの選択肢があるか）を確認
+            if online_radio_button.is_visible():
+                log("開催形式の選択肢を検出。「オンライン」を選択します。")
+                online_radio_button.check()
+                expect(online_radio_button).to_be_checked()
+                log("「オンライン」を選択しました。")
             
             first_block = page.locator('div[data-repeater-item]').first
             first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(single_date.year))
@@ -104,12 +112,8 @@ def add_schedules_logic(log, url, contact, start_str, end_str):
             confirm_button.click()
             
             log("完了ページへの遷移を待っています...")
-            # 講座の公開ページにリダイレクトされたことを確認する
-            # 「集客する」または「日程追加」リンクが表示されるのを待つ
             button1 = page.get_by_role("link", name="集客する")
             button2 = page.get_by_role("link", name="日程追加")
-            # どちらかのボタンが表示されるのを待つ
-            # 複数見つかる可能性があるため、.first で最初に見つかった要素を対象にする
             expect(button1.or_(button2).first).to_be_visible(timeout=20000)
             
             log(f"--- {single_date.strftime('%Y-%m-%d')} の日程追加が完了しました！ ---")
