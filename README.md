@@ -116,7 +116,6 @@ from playwright.sync_api import sync_playwright, expect
 import threading
 import os
 
-# --- ★★★★★ ここから設定項目 ★★★★★ ---
 # 認証情報ファイルのパス (このままでOK)
 AUTH_FILE_PATH = 'playwright_auth.json'
 
@@ -127,9 +126,8 @@ TARGET_URL = 'https://www.street-academy.com/session_details/new_multi_session?c
 # ②：あなたの緊急連絡先(電話番号)に書き換えてください
 EMERGENCY_CONTACT = '090-1234-5678' 
 
-# ③：追加したい時間帯 (9時〜22時でよければ変更不要)
-HOURS_TO_ADD = list(range(9, 23)) 
-# --- ★★★★★ 設定項目はここまで ★★★★★ ---
+# ③：追加したい時間帯 (8時〜22時でよければ変更不要)
+HOURS_TO_ADD = list(range(8, 23)) 
 
 
 def do_login(page_instance: ft.Page, status_text: ft.Text):
@@ -163,7 +161,7 @@ def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *a
         log_text.value += message + "\n"
         page_instance.update()
 
-    log_text.value = "" # ログをクリア
+    log_text.value = ""
     page_instance.update()
 
     try:
@@ -190,6 +188,16 @@ def add_schedules_logic(log, url, contact, start_str, end_str):
             log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程を追加します ---")
             page.goto(url)
             expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
+
+            # 「オンライン」のラジオボタンをIDで特定
+            online_radio_button = page.locator("#is_online_check")
+            
+            # ラジオボタンが表示されているか（=対面/オンラインの選択肢があるか）を確認
+            if online_radio_button.is_visible():
+                log("開催形式の選択肢を検出。「オンライン」を選択します。")
+                online_radio_button.check()
+                expect(online_radio_button).to_be_checked()
+                log("「オンライン」を選択しました。")
             
             first_block = page.locator('div[data-repeater-item]').first
             first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(single_date.year))
@@ -213,7 +221,12 @@ def add_schedules_logic(log, url, contact, start_str, end_str):
             confirm_button = page.get_by_role("button", name="確定")
             expect(confirm_button).to_be_visible(timeout=15000)
             confirm_button.click()
-            expect(page.get_by_text("講座の予約受付が開始されました！")).to_be_visible(timeout=20000)
+            
+            log("完了ページへの遷移を待っています...")
+            button1 = page.get_by_role("link", name="集客する")
+            button2 = page.get_by_role("link", name="日程追加")
+            expect(button1.or_(button2).first).to_be_visible(timeout=20000)
+            
             log(f"--- {single_date.strftime('%Y-%m-%d')} の日程追加が完了しました！ ---")
             time.sleep(3)
         
@@ -221,9 +234,8 @@ def add_schedules_logic(log, url, contact, start_str, end_str):
         log("\nすべての処理が完了しました。")
 
 def delete_schedules_logic(log, start_str, end_str, class_names_str):
-    """ 日程削除のメインロジック """
+    """ 講座名でフィルタリングして日程を削除する """
     log("日程削除処理を開始します...")
-    
     target_class_names = [name.strip() for name in class_names_str.strip().split('\n') if name.strip()]
     if not target_class_names:
         log("エラー: 削除対象の講座名が入力されていません。")
@@ -243,18 +255,24 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
 
         for single_date in daterange(start_date, end_date):
             date_param = single_date.strftime('%Y-%-m-%-d')
-            daily_schedule_url = f"https://www.street-academy.com/dashboard/steachers/manage_class_dates?date={date_param}"
+            daily_schedule_url = f"https://www.street-academy.com/dashboard/organizers/schedule_list?date={date_param}"
             log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程削除を開始します ---")
 
             while True:
                 log(f"アクセス中: {daily_schedule_url}")
                 page.goto(daily_schedule_url, timeout=60000)
-                page.wait_for_load_state('networkidle')
                 
+                log("ページの読み込みを待っています...")
+                schedule_links_locator = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
+                no_schedule_text_locator = page.locator("text=講座がありません")
+                
+                expect(schedule_links_locator.or_(no_schedule_text_locator).first).to_be_visible(timeout=30000)
+                log("ページの読み込み完了。")
+
                 all_schedule_links = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
                 
                 if all_schedule_links.count() == 0:
-                    log("この日付に削除対象の講座はありません。")
+                    log("この日付に削除可能な日程はありません。")
                     break
                 
                 target_link = None
@@ -266,11 +284,12 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
                         break
 
                 if target_link is None:
-                    log("この日付に削除対象の講座はありません。")
+                    log("この日付に削除対象の講座はありませんでした。")
                     break
                 
                 target_text = target_link.inner_text()
-                log(f"  - 削除対象: {target_text.strip().replace('\n', ' ')}")
+                target_text_clean = target_text.strip().replace('\n', ' ')
+                log(f"  - 削除対象: {target_text_clean}")
                 
                 target_link.click()
                 
