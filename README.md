@@ -255,22 +255,34 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
 
         for single_date in daterange(start_date, end_date):
             date_param = single_date.strftime('%Y-%-m-%-d')
+            ### 主催団体用
             daily_schedule_url = f"https://www.street-academy.com/dashboard/organizers/schedule_list?date={date_param}"
+            ### 個人用
+            # daily_schedule_url = f"https://www.street-academy.com/dashboard/steachers/manage_class_dates?date={date_param}"
             log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程削除を開始します ---")
 
             while True:
                 log(f"アクセス中: {daily_schedule_url}")
                 page.goto(daily_schedule_url, timeout=60000)
-                
+
                 log("ページの読み込みを待っています...")
                 schedule_links_locator = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
                 no_schedule_text_locator = page.locator("text=講座がありません")
-                
-                expect(schedule_links_locator.or_(no_schedule_text_locator).first).to_be_visible(timeout=30000)
-                log("ページの読み込み完了。")
 
-                all_schedule_links = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
-                
+                # どちらかが見つかるまで最大2秒待つ
+                found = False
+                for _ in range(2):
+                    if schedule_links_locator.count() > 0 or no_schedule_text_locator.count() > 0:
+                        found = True
+                        break
+                    time.sleep(2)
+                if not found:
+                    log("日程リンクも「講座がありません」も見つかりませんでした。次の日付へ進みます。")
+                    break
+
+                log("ページの読み込み完了。")
+                all_schedule_links = schedule_links_locator
+
                 if all_schedule_links.count() == 0:
                     log("この日付に削除可能な日程はありません。")
                     break
@@ -292,15 +304,17 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
                 log(f"  - 削除対象: {target_text_clean}")
                 
                 target_link.click()
+                time.sleep(5)
                 
                 cancel_button_1 = page.get_by_role("link", name="開催をキャンセルする")
                 expect(cancel_button_1).to_be_visible()
                 cancel_button_1.click()
+                time.sleep(5)
                 
                 modal_cancel_button = page.locator("#sa-modal-cancel").get_by_role("button", name="開催キャンセル")
                 expect(modal_cancel_button).to_be_visible()
                 
-                page.once("dialog", lambda dialog: dialog.accept())
+                page.once("dialog", lambda dialog: (time.sleep(3), dialog.accept()))
                 modal_cancel_button.click()
                 
                 log("  - キャンセル処理を実行しました。")
