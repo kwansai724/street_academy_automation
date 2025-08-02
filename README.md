@@ -170,9 +170,80 @@ def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *a
         log(f"予期せぬエラーが発生しました: {e}")
         print(f"エラー詳細: {e}")
 
-def add_schedules_logic(log, url, contact, start_str, end_str):
-    """ 日程追加のメインロジック """
-    log("日程追加処理を開始します...")
+def add_schedules_logic(log, url, contact, schedules_text):
+    """個別日程で日程を追加するロジック"""
+    log("個別日程による日程追加を開始します...")
+    schedules = parse_custom_schedules(schedules_text)
+    if not schedules:
+        log("有効な日程が入力されていません。\n例: 2025-08-27\t14:00~15:30")
+        return
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        if not os.path.exists(AUTH_FILE_PATH):
+            log("エラー: 認証ファイル 'playwright_auth.json' が見つかりません。")
+            return
+        context = browser.new_context(storage_state=AUTH_FILE_PATH)
+        page = context.new_page()
+        for date_str, start_str, end_str in schedules:
+            log(f"\n--- {date_str} {start_str}~{end_str} の日程を追加します ---")
+            page.goto(url)
+            expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
+
+            # オンライン選択肢があれば選択（既存ロジック流用）
+            online_radio_button = page.locator("#is_online_check")
+            if online_radio_button.is_visible():
+                log("開催形式の選択肢を検出。「オンライン」を選択します。")
+                online_radio_button.check()
+                expect(online_radio_button).to_be_checked()
+                log("「オンライン」を選択しました。")
+
+            first_block = page.locator('div[data-repeater-item]').first
+            y, m, d = map(int, date_str.split('-'))
+            first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(y))
+            first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(m))
+            first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(d))
+            start_hour, start_min = map(int, start_str.split(':'))
+            end_hour, end_min = map(int, end_str.split(':'))
+            first_block.locator('select.js_start_time_hour').select_option(str(start_hour))
+            first_block.locator('select.js_start_time_minute').select_option(str(start_min))
+            first_block.locator('select.js_end_time_hour').select_option(str(end_hour))
+            first_block.locator('select.js_end_time_minute').select_option(str(end_min))
+            log(f"{start_hour:02d}:{start_min:02d} - {end_hour:02d}:{end_min:02d} の日程を設定しました。")
+
+            page.locator("#session_detail_multi_form_emergency_contact").fill(contact)
+            time.sleep(1)
+            page.get_by_role("button", name="プレビュー画面で確認").click()
+            confirm_button = page.get_by_role("button", name="確定")
+            expect(confirm_button).to_be_visible(timeout=15000)
+            time.sleep(1)
+            confirm_button.click()
+            log("完了ページへの遷移を待っています...")
+            button1 = page.get_by_role("link", name="集客する")
+            button2 = page.get_by_role("link", name="日程追加")
+            expect(button1.or_(button2).first).to_be_visible(timeout=20000)
+            log(f"--- {date_str} {start_str}~{end_str} の日程追加が完了しました！ ---")
+            time.sleep(3)
+        browser.close()
+        log("\nすべての処理が完了しました。")
+
+
+def parse_custom_schedules(text):
+    """個別日程リストのテキストをパースして [(date, start, end)] のリストにする"""
+    result = []
+    for line in text.strip().splitlines():
+        if not line.strip():
+            continue
+        try:
+            date_part, time_part = line.strip().split('\t')
+            start_time, end_time = time_part.split('~')
+            result.append((date_part.strip(), start_time.strip(), end_time.strip()))
+        except Exception:
+            continue
+    return result
+
+def add_continuous_schedules_logic(log, url, contact, start_str, end_str):
+    """ 連続日程追加のロジック """
+    log("連続日程追加処理を開始します...")
     start_date = date.fromisoformat(start_str)
     end_date = date.fromisoformat(end_str)
     
@@ -352,16 +423,92 @@ def main(page: ft.Page):
     
     login_button = ft.ElevatedButton("ログイン / 認証情報を作成 (初回のみ)", on_click=handle_login)
 
-    # 日程追加用UI
+
+    # --- 日程追加方式の選択ラジオボタン ---
+    add_mode = ft.RadioGroup(
+        content=ft.Row([
+            ft.Radio(value="custom", label="個別日程追加"),
+            ft.Radio(value="normal", label="連続日程追加")
+        ]),
+        value="custom"
+    )
+
+    # --- 連続日程追加用UI ---
     url_input = ft.TextField(label="日程追加ページのURL", value=TARGET_URL, width=600)
     contact_input = ft.TextField(label="緊急連絡先", value=EMERGENCY_CONTACT, width=300)
     add_start_date = ft.TextField(label="開始日 (YYYY-MM-DD)", width=200)
     add_end_date = ft.TextField(label="終了日 (YYYY-MM-DD)", width=200)
-    
-    def handle_add_schedules(e):
-        run_in_thread(run_playwright_task, page, log_view, add_schedules_logic, url_input.value, contact_input.value, add_start_date.value, add_end_date.value)
+    add_button = ft.ElevatedButton("連続日程追加", bgcolor="blue", color="white")
 
-    add_button = ft.ElevatedButton("日程を追加", on_click=handle_add_schedules, bgcolor="blue", color="white")
+    # --- 個別日程追加用UI ---
+    custom_schedules_input = ft.TextField(
+        label="個別日程リスト (例: 2025-08-27\t14:00~15:30)",
+        multiline=True,
+        min_lines=3,
+        width=600,
+        hint_text="例:\n2025-08-27\t14:00~15:30\n2025-08-28\t12:00~14:00",
+        hint_style=ft.TextStyle(color="#bbbbbb")
+    )
+    add_custom_button = ft.ElevatedButton("個別日程追加", bgcolor="green", color="white")
+
+    # 排他制御用フラグ
+    add_running = {'value': False}
+
+    def set_add_running(state: bool):
+        add_running['value'] = state
+        add_button.disabled = state
+        add_custom_button.disabled = state
+        page.update()
+
+    def handle_add_schedules(e):
+        if add_running['value']:
+            return
+        set_add_running(True)
+        def wrapped():
+            try:
+                run_playwright_task(page, log_view, add_continuous_schedules_logic, url_input.value, contact_input.value, add_start_date.value, add_end_date.value)
+            finally:
+                set_add_running(False)
+        run_in_thread(wrapped)
+    add_button.on_click = handle_add_schedules
+
+    def handle_add_custom_schedules(e):
+        if add_running['value']:
+            return
+        set_add_running(True)
+        def wrapped():
+            try:
+                run_playwright_task(page, log_view, add_schedules_logic, url_input.value, contact_input.value, custom_schedules_input.value)
+            finally:
+                set_add_running(False)
+        run_in_thread(wrapped)
+    add_custom_button.on_click = handle_add_custom_schedules
+
+    # --- 日程追加フォームの切り替え ---
+    normal_add_form = ft.Column([
+        url_input,
+        contact_input,
+        ft.Row([add_start_date, add_end_date]),
+        add_button
+    ])
+    custom_add_form = ft.Column([
+        url_input,
+        contact_input,
+        custom_schedules_input,
+        add_custom_button
+    ])
+
+    add_form_container = ft.Container()
+
+    def update_add_form(_=None):
+        if add_mode.value == "normal":
+            add_form_container.content = normal_add_form
+        else:
+            add_form_container.content = custom_add_form
+        page.update()
+
+    add_mode.on_change = update_add_form
+    update_add_form()
 
     # 日程削除用UI
     delete_start_date = ft.TextField(label="開始日 (YYYY-MM-DD)", width=200)
@@ -370,7 +517,8 @@ def main(page: ft.Page):
         label="削除対象の講座名 (複数ある場合は改行して入力)",
         multiline=True,
         min_lines=3,
-        hint_text="例:\nNotebookLMに資料投入！\nAIとGASで夢の時短術！"
+        hint_text="例:\nNotebookLMに資料投入！\nAIとGASで夢の時短術！",
+        hint_style=ft.TextStyle(color="#bbbbbb")
     )
     
     def handle_delete_schedules(e):
@@ -392,10 +540,8 @@ def main(page: ft.Page):
             ft.Row([login_button, auth_status_text], alignment=ft.MainAxisAlignment.START),
             ft.Divider(),
             ft.Text("日程の追加", size=20, weight=ft.FontWeight.BOLD),
-            url_input,
-            contact_input,
-            ft.Row([add_start_date, add_end_date]),
-            add_button,
+            add_mode,
+            add_form_container,
             ft.Divider(),
             ft.Text("日程の削除", size=20, weight=ft.FontWeight.BOLD),
             class_names_input,
