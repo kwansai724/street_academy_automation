@@ -216,14 +216,29 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
         for single_date in daterange(start_date, end_date):
             date_param = single_date.strftime('%Y-%-m-%-d')
             ### 主催団体用
-            daily_schedule_url = f"https://www.street-academy.com/dashboard/organizers/schedule_list?date={date_param}"
+            base_url = f"https://www.street-academy.com/dashboard/organizers/schedule_list?date={date_param}"
             ### 個人用
-            # daily_schedule_url = f"https://www.street-academy.com/dashboard/steachers/manage_class_dates?date={date_param}"
+            # base_url = f"https://www.street-academy.com/dashboard/steachers/manage_class_dates?date={date_param}"
             log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程削除を開始します ---")
 
+            next_url = base_url
+            found_any = False
             while True:
-                log(f"アクセス中: {daily_schedule_url}")
-                page.goto(daily_schedule_url, timeout=60000)
+                url = next_url
+                log(f"アクセス中: {url}")
+
+                # 403 Forbidden検知＆リトライ
+                for retry in range(3):  # 最大3回リトライ
+                    page.goto(url, timeout=60000)
+                    body_html = page.content()
+                    if "403 Forbidden" in body_html:
+                        log("403 Forbidden画面を検知。2分間待機してリトライします。")
+                        time.sleep(120)
+                    else:
+                        break
+                else:
+                    log("403 Forbiddenが解消しませんでした。次の日付へ進みます。")
+                    break
 
                 log("ページの読み込みを待っています...")
                 schedule_links_locator = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
@@ -244,9 +259,17 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
                 all_schedule_links = schedule_links_locator
 
                 if all_schedule_links.count() == 0:
-                    log("この日付に削除可能な日程はありません。")
+                    # ページ内に日程がなければ、次ページがあるか確認して終了判定
+                    next_button = page.locator('a[rel="next"]')
+                    if next_button.count() > 0:
+                        href = next_button.first.get_attribute('href')
+                        if href:
+                            next_url = "https://www.street-academy.com" + href
+                            continue
+                    if not found_any:
+                        log("この日付に削除可能な日程はありません。")
                     break
-                
+
                 target_link = None
                 for i in range(all_schedule_links.count()):
                     link = all_schedule_links.nth(i)
@@ -256,30 +279,42 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
                         break
 
                 if target_link is None:
-                    log("この日付に削除対象の講座はありませんでした。")
+                    # 次ページがあれば巡回、なければ終了
+                    next_button = page.locator('a[rel="next"]')
+                    if next_button.count() > 0:
+                        href = next_button.first.get_attribute('href')
+                        if href:
+                            next_url = "https://www.street-academy.com" + href
+                            continue
+                    if not found_any:
+                        log("この日付に削除対象の講座はありませんでした。")
                     break
-                
+
+                found_any = True
                 target_text = target_link.inner_text()
                 target_text_clean = target_text.strip().replace('\n', ' ')
                 log(f"  - 削除対象: {target_text_clean}")
-                
                 target_link.click()
                 time.sleep(5)
-                
+
                 cancel_button_1 = page.get_by_role("link", name="開催をキャンセルする")
                 expect(cancel_button_1).to_be_visible()
                 cancel_button_1.click()
                 time.sleep(5)
-                
+
                 modal_cancel_button = page.locator("#sa-modal-cancel").get_by_role("button", name="開催キャンセル")
                 expect(modal_cancel_button).to_be_visible()
-                
-                page.once("dialog", lambda dialog: (time.sleep(3), dialog.accept()))
+
+                page.once("dialog", lambda dialog: (time.sleep(5), dialog.accept()))
                 modal_cancel_button.click()
-                
+
                 log("  - キャンセル処理を実行しました。")
                 time.sleep(3)
-        
+                # 削除後は同じページを再読込して再度巡回
+                # ページングのためnext_urlをリセット（同じページを再読込）
+                next_url = url
+
+            # 次の日付へ
         browser.close()
         log("\nすべての処理が完了しました。")
 
