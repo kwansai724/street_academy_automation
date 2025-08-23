@@ -8,14 +8,10 @@ import os
 # 認証情報ファイルのパス (このままでOK)
 AUTH_FILE_PATH = 'playwright_auth.json'
 
-# ①：あなたの日程追加ページのURLに書き換えてください
-# 例: 'https://www.street-academy.com/session_details/new_multi_session?classdetailid=123456'
-TARGET_URL = 'https://www.street-academy.com/session_details/new_multi_session?classdetailid=123456'
-
-# ②：あなたの緊急連絡先(電話番号)に書き換えてください
+# ①：あなたの緊急連絡先(電話番号)に書き換えてください
 EMERGENCY_CONTACT = '090-1234-5678' 
 
-# ③：追加したい時間帯 (8時〜22時でよければ変更不要)
+# ②：追加したい時間帯 (8時〜22時でよければ変更不要)
 HOURS_TO_ADD = list(range(8, 23)) 
 
 
@@ -59,13 +55,22 @@ def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *a
         log(f"予期せぬエラーが発生しました: {e}")
         print(f"エラー詳細: {e}")
 
-def add_schedules_logic(log, url, contact, schedules_text):
+def add_schedules_logic(log, urls, contact, schedules_text):
     """個別日程で日程を追加するロジック"""
     log("個別日程による日程追加を開始します...")
     schedules = parse_custom_schedules(schedules_text)
     if not schedules:
         log("有効な日程が入力されていません。\n例: 2025-08-27\t14:00~15:30")
         return
+    
+    # URLを改行区切りで分割
+    url_list = [url.strip() for url in urls.strip().split('\n') if url.strip()]
+    if not url_list:
+        log("エラー: 有効なURLが入力されていません。")
+        return
+    
+    log(f"処理対象のURL数: {len(url_list)}")
+    
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
         if not os.path.exists(AUTH_FILE_PATH):
@@ -73,45 +78,48 @@ def add_schedules_logic(log, url, contact, schedules_text):
             return
         context = browser.new_context(storage_state=AUTH_FILE_PATH)
         page = context.new_page()
-        for date_str, start_str, end_str in schedules:
-            log(f"\n--- {date_str} {start_str}~{end_str} の日程を追加します ---")
-            page.goto(url)
-            expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
+        
+        for url_index, url in enumerate(url_list, 1):
+            log(f"\n=== URL {url_index}/{len(url_list)}: {url} ===")
+            for schedule_index, (date_str, start_str, end_str) in enumerate(schedules, 1):
+                log(f"\n--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} を追加します ---")
+                page.goto(url)
+                expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
 
-            # オンライン選択肢があれば選択（既存ロジック流用）
-            online_radio_button = page.locator("#is_online_check")
-            if online_radio_button.is_visible():
-                log("開催形式の選択肢を検出。「オンライン」を選択します。")
-                online_radio_button.check()
-                expect(online_radio_button).to_be_checked()
-                log("「オンライン」を選択しました。")
+                # オンライン選択肢があれば選択（既存ロジック流用）
+                online_radio_button = page.locator("#is_online_check")
+                if online_radio_button.is_visible():
+                    log("開催形式の選択肢を検出。「オンライン」を選択します。")
+                    online_radio_button.check()
+                    expect(online_radio_button).to_be_checked()
+                    log("「オンライン」を選択しました。")
 
-            first_block = page.locator('div[data-repeater-item]').first
-            y, m, d = map(int, date_str.split('-'))
-            first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(y))
-            first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(m))
-            first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(d))
-            start_hour, start_min = map(int, start_str.split(':'))
-            end_hour, end_min = map(int, end_str.split(':'))
-            first_block.locator('select.js_start_time_hour').select_option(str(start_hour))
-            first_block.locator('select.js_start_time_minute').select_option(str(start_min))
-            first_block.locator('select.js_end_time_hour').select_option(str(end_hour))
-            first_block.locator('select.js_end_time_minute').select_option(str(end_min))
-            log(f"{start_hour:02d}:{start_min:02d} - {end_hour:02d}:{end_min:02d} の日程を設定しました。")
+                first_block = page.locator('div[data-repeater-item]').first
+                y, m, d = map(int, date_str.split('-'))
+                first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(y))
+                first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(m))
+                first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(d))
+                start_hour, start_min = map(int, start_str.split(':'))
+                end_hour, end_min = map(int, end_str.split(':'))
+                first_block.locator('select.js_start_time_hour').select_option(str(start_hour))
+                first_block.locator('select.js_start_time_minute').select_option(str(start_min))
+                first_block.locator('select.js_end_time_hour').select_option(str(end_hour))
+                first_block.locator('select.js_end_time_minute').select_option(str(end_min))
+                log(f"{start_hour:02d}:{start_min:02d} - {end_hour:02d}:{end_min:02d} の日程を設定しました。")
 
-            page.locator("#session_detail_multi_form_emergency_contact").fill(contact)
-            time.sleep(1)
-            page.get_by_role("button", name="プレビュー画面で確認").click()
-            confirm_button = page.get_by_role("button", name="確定")
-            expect(confirm_button).to_be_visible(timeout=15000)
-            time.sleep(1)
-            confirm_button.click()
-            log("完了ページへの遷移を待っています...")
-            button1 = page.get_by_role("link", name="集客する")
-            button2 = page.get_by_role("link", name="日程追加")
-            expect(button1.or_(button2).first).to_be_visible(timeout=20000)
-            log(f"--- {date_str} {start_str}~{end_str} の日程追加が完了しました！ ---")
-            time.sleep(3)
+                page.locator("#session_detail_multi_form_emergency_contact").fill(contact)
+                time.sleep(1)
+                page.get_by_role("button", name="プレビュー画面で確認").click()
+                confirm_button = page.get_by_role("button", name="確定")
+                expect(confirm_button).to_be_visible(timeout=15000)
+                time.sleep(1)
+                confirm_button.click()
+                log("完了ページへの遷移を待っています...")
+                button1 = page.get_by_role("link", name="集客する")
+                button2 = page.get_by_role("link", name="日程追加")
+                expect(button1.or_(button2).first).to_be_visible(timeout=20000)
+                log(f"--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} の日程追加が完了しました！ ---")
+                time.sleep(3)
         browser.close()
         log("\nすべての処理が完了しました。")
 
@@ -130,11 +138,19 @@ def parse_custom_schedules(text):
             continue
     return result
 
-def add_continuous_schedules_logic(log, url, contact, start_str, end_str):
+def add_continuous_schedules_logic(log, urls, contact, start_str, end_str):
     """ 連続日程追加のロジック """
     log("連続日程追加処理を開始します...")
     start_date = date.fromisoformat(start_str)
     end_date = date.fromisoformat(end_str)
+    
+    # URLを改行区切りで分割
+    url_list = [url.strip() for url in urls.strip().split('\n') if url.strip()]
+    if not url_list:
+        log("エラー: 有効なURLが入力されていません。")
+        return
+    
+    log(f"処理対象のURL数: {len(url_list)}")
     
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=False)
@@ -144,51 +160,53 @@ def add_continuous_schedules_logic(log, url, contact, start_str, end_str):
         context = browser.new_context(storage_state=AUTH_FILE_PATH)
         page = context.new_page()
 
-        for single_date in daterange(start_date, end_date):
-            log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程を追加します ---")
-            page.goto(url)
-            expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
+        for url_index, url in enumerate(url_list, 1):
+            log(f"\n=== URL {url_index}/{len(url_list)}: {url} ===")
+            for single_date in daterange(start_date, end_date):
+                log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程を追加します ---")
+                page.goto(url)
+                expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
 
-            # 「オンライン」のラジオボタンをIDで特定
-            online_radio_button = page.locator("#is_online_check")
-            
-            # ラジオボタンが表示されているか（=対面/オンラインの選択肢があるか）を確認
-            if online_radio_button.is_visible():
-                log("開催形式の選択肢を検出。「オンライン」を選択します。")
-                online_radio_button.check()
-                expect(online_radio_button).to_be_checked()
-                log("「オンライン」を選択しました。")
-            
-            first_block = page.locator('div[data-repeater-item]').first
-            first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(single_date.year))
-            first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(single_date.month))
-            first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(single_date.day))
-            first_block.locator('select.js_start_time_hour').select_option(str(HOURS_TO_ADD[0]))
-            first_block.locator('select.js_end_time_hour').select_option(str(HOURS_TO_ADD[0] + 1))
-            log(f"{HOURS_TO_ADD[0]}:00 - {HOURS_TO_ADD[0]+1}:00 の日程を設定しました。")
+                # 「オンライン」のラジオボタンをIDで特定
+                online_radio_button = page.locator("#is_online_check")
+                
+                # ラジオボタンが表示されているか（=対面/オンラインの選択肢があるか）を確認
+                if online_radio_button.is_visible():
+                    log("開催形式の選択肢を検出。「オンライン」を選択します。")
+                    online_radio_button.check()
+                    expect(online_radio_button).to_be_checked()
+                    log("「オンライン」を選択しました。")
+                
+                first_block = page.locator('div[data-repeater-item]').first
+                first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(single_date.year))
+                first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(single_date.month))
+                first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(single_date.day))
+                first_block.locator('select.js_start_time_hour').select_option(str(HOURS_TO_ADD[0]))
+                first_block.locator('select.js_end_time_hour').select_option(str(HOURS_TO_ADD[0] + 1))
+                log(f"{HOURS_TO_ADD[0]}:00 - {HOURS_TO_ADD[0]+1}:00 の日程を設定しました。")
 
-            for hour in HOURS_TO_ADD[1:]:
-                page.get_by_role("button", name="日程を複製する").click()
-                last_block = page.locator('div[data-repeater-item]').last
-                expect(last_block).to_be_visible()
-                end_hour = hour + 1 if hour < 23 else 23
-                last_block.locator('select.js_start_time_hour').select_option(str(hour))
-                last_block.locator('select.js_end_time_hour').select_option(str(end_hour))
-                log(f"{hour}:00 - {end_hour}:00 の日程を設定しました。")
+                for hour in HOURS_TO_ADD[1:]:
+                    page.get_by_role("button", name="日程を複製する").click()
+                    last_block = page.locator('div[data-repeater-item]').last
+                    expect(last_block).to_be_visible()
+                    end_hour = hour + 1 if hour < 23 else 23
+                    last_block.locator('select.js_start_time_hour').select_option(str(hour))
+                    last_block.locator('select.js_end_time_hour').select_option(str(end_hour))
+                    log(f"{hour}:00 - {end_hour}:00 の日程を設定しました。")
 
-            page.locator("#session_detail_multi_form_emergency_contact").fill(contact)
-            page.get_by_role("button", name="プレビュー画面で確認").click()
-            confirm_button = page.get_by_role("button", name="確定")
-            expect(confirm_button).to_be_visible(timeout=15000)
-            confirm_button.click()
-            
-            log("完了ページへの遷移を待っています...")
-            button1 = page.get_by_role("link", name="集客する")
-            button2 = page.get_by_role("link", name="日程追加")
-            expect(button1.or_(button2).first).to_be_visible(timeout=20000)
-            
-            log(f"--- {single_date.strftime('%Y-%m-%d')} の日程追加が完了しました！ ---")
-            time.sleep(3)
+                page.locator("#session_detail_multi_form_emergency_contact").fill(contact)
+                page.get_by_role("button", name="プレビュー画面で確認").click()
+                confirm_button = page.get_by_role("button", name="確定")
+                expect(confirm_button).to_be_visible(timeout=15000)
+                confirm_button.click()
+                
+                log("完了ページへの遷移を待っています...")
+                button1 = page.get_by_role("link", name="集客する")
+                button2 = page.get_by_role("link", name="日程追加")
+                expect(button1.or_(button2).first).to_be_visible(timeout=20000)
+                
+                log(f"--- {single_date.strftime('%Y-%m-%d')} の日程追加が完了しました！ ---")
+                time.sleep(3)
         
         browser.close()
         log("\nすべての処理が完了しました。")
@@ -358,7 +376,14 @@ def main(page: ft.Page):
     )
 
     # --- 連続日程追加用UI ---
-    url_input = ft.TextField(label="日程追加ページのURL", value=TARGET_URL, width=600)
+    url_input = ft.TextField(
+        label="日程追加ページのURL (複数の場合は改行して入力)", 
+        width=600,
+        multiline=True,
+        min_lines=3,
+        hint_text="例:\nhttps://www.street-academy.com/session_details/new_multi_session?classdetailid=123456\nhttps://www.street-academy.com/session_details/new_multi_session?classdetailid=789012",
+        hint_style=ft.TextStyle(color="#bbbbbb")
+    )
     contact_input = ft.TextField(label="緊急連絡先", value=EMERGENCY_CONTACT, width=300)
     add_start_date = ft.TextField(label="開始日 (YYYY-MM-DD)", width=200)
     add_end_date = ft.TextField(label="終了日 (YYYY-MM-DD)", width=200)
