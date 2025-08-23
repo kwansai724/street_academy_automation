@@ -622,20 +622,13 @@ def main(page: ft.Page):
         label="削除対象の講座名 (複数ある場合は改行して入力)",
         multiline=True,
         min_lines=3,
+        width=600,
         hint_text="例:\nNotebookLMに資料投入！\nAIとGASで夢の時短術！",
         hint_style=ft.TextStyle(color="#bbbbbb")
     )
     delete_by_name_button = ft.ElevatedButton("連続日程削除", bgcolor="red", color="white")
 
     # --- 個別日程削除用UI ---
-    delete_custom_class_names_input = ft.TextField(
-        label="削除対象の講座名 (複数ある場合は改行して入力)",
-        multiline=True,
-        min_lines=2,
-        width=600,
-        hint_text="例:\nNotebookLMに資料投入！\nAIとGASで夢の時短術！",
-        hint_style=ft.TextStyle(color="#bbbbbb")
-    )
     delete_custom_schedules_input = ft.TextField(
         label="削除対象の日程リスト (例: 2025-08-27\t14:00~15:30)",
         multiline=True,
@@ -673,7 +666,7 @@ def main(page: ft.Page):
         set_delete_running(True)
         def wrapped():
             try:
-                run_playwright_task(page, log_view, delete_custom_schedules_logic, delete_custom_schedules_input.value, delete_custom_class_names_input.value)
+                run_playwright_task(page, log_view, delete_custom_schedules_logic, delete_custom_schedules_input.value, class_names_input.value)
             finally:
                 set_delete_running(False)
         run_in_thread(wrapped)
@@ -686,7 +679,7 @@ def main(page: ft.Page):
         delete_by_name_button
     ])
     custom_delete_form = ft.Column([
-        delete_custom_class_names_input,
+        class_names_input,
         delete_custom_schedules_input,
         delete_custom_button
     ])
