@@ -336,6 +336,153 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
         browser.close()
         log("\nすべての処理が完了しました。")
 
+def delete_custom_schedules_logic(log, schedules_text, class_names_str):
+    """個別日程で日程を削除するロジック"""
+    log("個別日程による日程削除を開始します...")
+    schedules = parse_custom_schedules(schedules_text)
+    if not schedules:
+        log("有効な日程が入力されていません。\n例: 2025-08-27\t14:00~15:30")
+        return
+    
+    target_class_names = [name.strip() for name in class_names_str.strip().split('\n') if name.strip()]
+    if not target_class_names:
+        log("エラー: 削除対象の講座名が入力されていません。")
+        return
+    
+    log(f"削除対象の講座名: {', '.join(target_class_names)}")
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+        if not os.path.exists(AUTH_FILE_PATH):
+            log("エラー: 認証ファイル 'playwright_auth.json' が見つかりません。")
+            return
+        context = browser.new_context(storage_state=AUTH_FILE_PATH)
+        page = context.new_page()
+
+        for schedule_index, (date_str, start_str, end_str) in enumerate(schedules, 1):
+            log(f"\n--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} を削除します ---")
+            
+            # 日付パラメータを作成
+            target_date = date.fromisoformat(date_str)
+            date_param = target_date.strftime('%Y-%-m-%-d')
+            
+            ### 主催団体用
+            base_url = f"https://www.street-academy.com/dashboard/organizers/schedule_list?date={date_param}"
+            ### 個人用
+            # base_url = f"https://www.street-academy.com/dashboard/steachers/manage_class_dates?date={date_param}"
+            
+            found_schedule = False
+            
+            # 削除対象の講座がすべて削除されるまで繰り返し
+            while True:
+                # 講座一覧ページにアクセス
+                log(f"アクセス中: {base_url}")
+
+                # 403 Forbidden検知＆リトライ
+                for retry in range(3):  # 最大3回リトライ
+                    page.goto(base_url, timeout=60000)
+                    body_html = page.content()
+                    if "403 Forbidden" in body_html:
+                        log("403 Forbidden画面を検知。2分間待機してリトライします。")
+                        time.sleep(120)
+                    else:
+                        break
+                else:
+                    log("403 Forbiddenが解消しませんでした。次の日程へ進みます。")
+                    break
+
+                log("ページの読み込みを待っています...")
+                schedule_links_locator = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
+                no_schedule_text_locator = page.locator("text=講座がありません")
+
+                # どちらかが見つかるまで最大2秒待つ
+                found = False
+                for _ in range(2):
+                    if schedule_links_locator.count() > 0 or no_schedule_text_locator.count() > 0:
+                        found = True
+                        break
+                    time.sleep(2)
+                if not found:
+                    log("日程リンクも「講座がありません」も見つかりませんでした。次の日程へ進みます。")
+                    break
+
+                log("ページの読み込み完了。")
+                all_schedule_links = schedule_links_locator
+
+                if all_schedule_links.count() == 0:
+                    log("この日付に削除可能な日程はありません。")
+                    break
+
+                # 削除対象の講座を探す
+                target_link = None
+                for i in range(all_schedule_links.count()):
+                    try:
+                        link = all_schedule_links.nth(i)
+                        link_text = link.inner_text()
+                        
+                        # 講座名の一致を確認
+                        if not any(class_name in link_text for class_name in target_class_names):
+                            continue
+                        
+                        # 開始時刻の情報を抽出（例: "20:00" のような形式）
+                        import re
+                        time_match = re.search(r'(\d{1,2}):(\d{2})', link_text)
+                        if time_match:
+                            start_hour, start_min = map(int, time_match.groups())
+                            link_start_time = f"{start_hour:02d}:{start_min:02d}"
+                            
+                            # 開始時刻が一致するかチェック
+                            if link_start_time == start_str:
+                                target_link = link
+                                break
+                    except Exception as e:
+                        log(f"  - 講座情報の取得中にエラーが発生しました: {e}")
+                        continue
+
+                # 削除対象の講座が見つからない場合は終了
+                if target_link is None:
+                    if not found_schedule:
+                        log(f"講座名と開始時刻 {start_str} に一致する日程が見つかりませんでした。")
+                    break
+
+                # 削除処理を実行
+                try:
+                    target_text = target_link.inner_text()
+                    target_text_clean = target_text.strip().replace('\n', ' ')
+                    log(f"  - 削除対象: {target_text_clean}")
+                    
+                    target_link.click()
+                    time.sleep(5)
+
+                    cancel_button_1 = page.get_by_role("link", name="開催をキャンセルする")
+                    expect(cancel_button_1).to_be_visible()
+                    cancel_button_1.click()
+                    time.sleep(5)
+
+                    modal_cancel_button = page.locator("#sa-modal-cancel").get_by_role("button", name="開催キャンセル")
+                    expect(modal_cancel_button).to_be_visible()
+
+                    page.once("dialog", lambda dialog: (time.sleep(5), dialog.accept()))
+                    modal_cancel_button.click()
+
+                    log(f"  - 日程削除が完了しました！")
+                    time.sleep(3)
+                    found_schedule = True
+                    
+                    # 削除処理が完了したら、講座一覧ページに戻って再度削除対象を探す
+                    continue
+                    
+                except Exception as e:
+                    log(f"  - 削除処理中にエラーが発生しました: {e}")
+                    break
+
+            # 日程が見つからなかった場合のログ
+            if not found_schedule:
+                log(f"日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} は見つかりませんでした。")
+
+        browser.close()
+        log("\nすべての処理が完了しました。")
+
 def daterange(start_date, end_date):
     for n in range(int((end_date - start_date).days) + 1):
         yield start_date + timedelta(n)
@@ -459,7 +606,16 @@ def main(page: ft.Page):
     add_mode.on_change = update_add_form
     update_add_form()
 
-    # 日程削除用UI
+    # --- 日程削除方式の選択ラジオボタン ---
+    delete_mode = ft.RadioGroup(
+        content=ft.Row([
+            ft.Radio(value="custom", label="個別日程削除"),
+            ft.Radio(value="normal", label="連続日程削除")
+        ]),
+        value="custom"
+    )
+
+    # --- 連続日程削除用UI ---
     delete_start_date = ft.TextField(label="開始日 (YYYY-MM-DD)", width=200)
     delete_end_date = ft.TextField(label="終了日 (YYYY-MM-DD)", width=200)
     class_names_input = ft.TextField(
@@ -469,11 +625,83 @@ def main(page: ft.Page):
         hint_text="例:\nNotebookLMに資料投入！\nAIとGASで夢の時短術！",
         hint_style=ft.TextStyle(color="#bbbbbb")
     )
-    
+    delete_by_name_button = ft.ElevatedButton("連続日程削除", bgcolor="red", color="white")
+
+    # --- 個別日程削除用UI ---
+    delete_custom_class_names_input = ft.TextField(
+        label="削除対象の講座名 (複数ある場合は改行して入力)",
+        multiline=True,
+        min_lines=2,
+        width=600,
+        hint_text="例:\nNotebookLMに資料投入！\nAIとGASで夢の時短術！",
+        hint_style=ft.TextStyle(color="#bbbbbb")
+    )
+    delete_custom_schedules_input = ft.TextField(
+        label="削除対象の日程リスト (例: 2025-08-27\t14:00~15:30)",
+        multiline=True,
+        min_lines=3,
+        width=600,
+        hint_text="例:\n2025-08-27\t14:00~15:30\n2025-08-28\t12:00~14:00",
+        hint_style=ft.TextStyle(color="#bbbbbb")
+    )
+    delete_custom_button = ft.ElevatedButton("個別日程削除", bgcolor="orange", color="white")
+
+    # 排他制御用フラグ
+    delete_running = {'value': False}
+
+    def set_delete_running(state: bool):
+        delete_running['value'] = state
+        delete_by_name_button.disabled = state
+        delete_custom_button.disabled = state
+        page.update()
+
     def handle_delete_schedules(e):
-        run_in_thread(run_playwright_task, page, log_view, delete_schedules_logic, delete_start_date.value, delete_end_date.value, class_names_input.value)
-    
-    delete_button = ft.ElevatedButton("指定した講座の日程を削除", on_click=handle_delete_schedules, bgcolor="red", color="white")
+        if delete_running['value']:
+            return
+        set_delete_running(True)
+        def wrapped():
+            try:
+                run_playwright_task(page, log_view, delete_schedules_logic, delete_start_date.value, delete_end_date.value, class_names_input.value)
+            finally:
+                set_delete_running(False)
+        run_in_thread(wrapped)
+    delete_by_name_button.on_click = handle_delete_schedules
+
+    def handle_delete_custom_schedules(e):
+        if delete_running['value']:
+            return
+        set_delete_running(True)
+        def wrapped():
+            try:
+                run_playwright_task(page, log_view, delete_custom_schedules_logic, delete_custom_schedules_input.value, delete_custom_class_names_input.value)
+            finally:
+                set_delete_running(False)
+        run_in_thread(wrapped)
+    delete_custom_button.on_click = handle_delete_custom_schedules
+
+    # --- 日程削除フォームの切り替え ---
+    normal_delete_form = ft.Column([
+        class_names_input,
+        ft.Row([delete_start_date, delete_end_date]),
+        delete_by_name_button
+    ])
+    custom_delete_form = ft.Column([
+        delete_custom_class_names_input,
+        delete_custom_schedules_input,
+        delete_custom_button
+    ])
+
+    delete_form_container = ft.Container()
+
+    def update_delete_form(_=None):
+        if delete_mode.value == "normal":
+            delete_form_container.content = normal_delete_form
+        else:
+            delete_form_container.content = custom_delete_form
+        page.update()
+
+    delete_mode.on_change = update_delete_form
+    update_delete_form()
 
     # ログ表示用UI
     log_view = ft.Text("", selectable=True, font_family="monospace", size=12)
@@ -493,9 +721,8 @@ def main(page: ft.Page):
             add_form_container,
             ft.Divider(),
             ft.Text("日程の削除", size=20, weight=ft.FontWeight.BOLD),
-            class_names_input,
-            ft.Row([delete_start_date, delete_end_date]),
-            delete_button,
+            delete_mode,
+            delete_form_container,
             ft.Divider(),
             ft.Text("実行ログ", size=16),
             log_container
