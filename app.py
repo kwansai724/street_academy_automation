@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from playwright.sync_api import sync_playwright, expect
 import threading
 import os
+import re
 
 # 認証情報ファイルのパス (このままでOK)
 AUTH_FILE_PATH = 'playwright_auth.json'
@@ -14,6 +15,217 @@ EMERGENCY_CONTACT = '090-1234-5678'
 # ②：追加したい時間帯 (8時〜22時でよければ変更不要)
 HOURS_TO_ADD = list(range(8, 23)) 
 
+# 共通設定
+BASE_URL = "https://www.street-academy.com"
+ORGANIZER_SCHEDULE_URL = f"{BASE_URL}/dashboard/organizers/schedule_list"
+TEACHER_SCHEDULE_URL = f"{BASE_URL}/dashboard/steachers/manage_class_dates"
+
+class PlaywrightHelper:
+    """Playwrightの共通処理を提供するヘルパークラス"""
+    
+    @staticmethod
+    def create_browser_context():
+        """ブラウザとコンテキストを作成"""
+        if not os.path.exists(AUTH_FILE_PATH):
+            raise Exception("認証ファイル 'playwright_auth.json' が見つかりません。")
+        
+        playwright = sync_playwright().start()
+        browser = playwright.chromium.launch(headless=False)
+        context = browser.new_context(storage_state=AUTH_FILE_PATH)
+        return playwright, browser, context
+    
+    @staticmethod
+    def handle_403_forbidden(page, log_func, max_retries=3):
+        """403 Forbiddenエラーの処理"""
+        for retry in range(max_retries):
+            body_html = page.content()
+            if "403 Forbidden" in body_html:
+                log_func("403 Forbidden画面を検知。2分間待機してリトライします。")
+                time.sleep(120)
+            else:
+                return True
+        log_func("403 Forbiddenが解消しませんでした。")
+        return False
+    
+    @staticmethod
+    def wait_for_page_load(page, log_func, timeout=2):
+        """ページの読み込み完了を待機"""
+        schedule_links_locator = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
+        no_schedule_text_locator = page.locator("text=講座がありません")
+        
+        for _ in range(timeout):
+            if schedule_links_locator.count() > 0 or no_schedule_text_locator.count() > 0:
+                return True
+            time.sleep(2)
+        return False
+
+class ScheduleHelper:
+    """日程関連の共通処理を提供するヘルパークラス"""
+    
+    @staticmethod
+    def parse_custom_schedules(text):
+        """個別日程リストのテキストをパースして [(date, start, end)] のリストにする"""
+        result = []
+        for line in text.strip().splitlines():
+            if not line.strip():
+                continue
+            try:
+                date_part, time_part = line.strip().split('\t')
+                start_time, end_time = time_part.split('~')
+                result.append((date_part.strip(), start_time.strip(), end_time.strip()))
+            except Exception:
+                continue
+        return result
+    
+    @staticmethod
+    def extract_time_from_text(text):
+        """テキストから開始時刻を抽出"""
+        time_match = re.search(r'(\d{1,2}):(\d{2})', text)
+        if time_match:
+            start_hour, start_min = map(int, time_match.groups())
+            return f"{start_hour:02d}:{start_min:02d}"
+        return None
+    
+    @staticmethod
+    def find_matching_schedule(links, class_names, start_time):
+        """指定された条件に一致する日程を探す"""
+        for i in range(links.count()):
+            try:
+                link = links.nth(i)
+                link_text = link.inner_text()
+                
+                # 講座名の一致を確認
+                if not any(class_name in link_text for class_name in class_names):
+                    continue
+                
+                # 開始時刻の一致を確認（start_timeがNoneの場合は講座名のみでマッチング）
+                if start_time is not None:
+                    link_start_time = ScheduleHelper.extract_time_from_text(link_text)
+                    if link_start_time != start_time:
+                        continue
+                
+                return link
+            except Exception:
+                continue
+        return None
+    
+    @staticmethod
+    def delete_schedule(page, link, log_func):
+        """日程の削除処理を実行"""
+        try:
+            target_text = link.inner_text()
+            target_text_clean = target_text.strip().replace('\n', ' ')
+            log_func(f"  - 削除対象: {target_text_clean}")
+            
+            # 削除前の講座一覧URLを保存
+            original_url = page.url
+            
+            link.click()
+            time.sleep(5)
+
+            cancel_button_1 = page.get_by_role("link", name="開催をキャンセルする")
+            expect(cancel_button_1).to_be_visible()
+            cancel_button_1.click()
+            time.sleep(5)
+
+            modal_cancel_button = page.locator("#sa-modal-cancel").get_by_role("button", name="開催キャンセル")
+            expect(modal_cancel_button).to_be_visible()
+
+            page.once("dialog", lambda dialog: (time.sleep(5), dialog.accept()))
+            modal_cancel_button.click()
+
+            log_func(f"  - 日程削除が完了しました！")
+            time.sleep(3)
+            
+            # 削除後に講座一覧に戻る
+            page.goto(original_url, timeout=60000)
+            time.sleep(3)
+            
+            return True
+        except Exception as e:
+            log_func(f"  - 削除処理中にエラーが発生しました: {e}")
+            # エラーが発生した場合も講座一覧に戻る
+            try:
+                if 'original_url' in locals():
+                    page.goto(original_url, timeout=60000)
+                    time.sleep(3)
+            except:
+                pass
+            return False
+    
+    @staticmethod
+    def find_and_delete_schedules(page, log_func, class_names, start_time=None, max_pages=10):
+        """指定された条件に一致する日程を探して削除する（ページング対応）"""
+        found_any = False
+        page_count = 0
+        
+        while page_count < max_pages:
+            page_count += 1
+            log_func(f"ページ {page_count} を確認中...")
+            
+            # ページの読み込みを待機
+            if not PlaywrightHelper.wait_for_page_load(page, log_func):
+                # 日程がないページの場合は正常終了として扱う
+                no_schedule_text = page.locator("text=講座がありません")
+                if no_schedule_text.count() > 0:
+                    log_func("このページに日程はありません。")
+                    break
+                else:
+                    log_func("ページの読み込みに失敗しました。")
+                    break
+            
+            # このページで削除対象がなくなるまで繰り返し削除
+            while True:
+                # 日程リンクを取得
+                all_schedule_links = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
+                
+                if all_schedule_links.count() == 0:
+                    log_func("このページに日程はありません。")
+                    break
+                
+                # 削除対象の日程を探す
+                target_link = ScheduleHelper.find_matching_schedule(all_schedule_links, class_names, start_time)
+                
+                if target_link is not None:
+                    # 削除処理を実行
+                    if ScheduleHelper.delete_schedule(page, target_link, log_func):
+                        found_any = True
+                        continue
+                    else:
+                        break
+                else:
+                    # 削除対象が見つからない場合はこのページの処理を終了
+                    break
+            
+            # 次ページがあるか確認
+            next_button = page.locator('a[rel="next"]')
+            if next_button.count() > 0:
+                href = next_button.first.get_attribute('href')
+                if href:
+                    next_url = BASE_URL + href
+                    page.goto(next_url, timeout=60000)
+                    if not PlaywrightHelper.handle_403_forbidden(page, log_func):
+                        break
+                    continue
+            
+            # 次ページがない場合は終了
+            break
+        
+        return found_any
+
+class URLHelper:
+    """URL関連の共通処理を提供するヘルパークラス"""
+    
+    @staticmethod
+    def build_schedule_url(date_param, is_organizer=True):
+        """日程一覧のURLを構築"""
+        base_url = ORGANIZER_SCHEDULE_URL if is_organizer else TEACHER_SCHEDULE_URL
+        return f"{base_url}?date={date_param}"
+    
+    @staticmethod
+    def format_date_param(target_date):
+        """日付パラメータをフォーマット"""
+        return target_date.strftime('%Y-%-m-%-d')
 
 def do_login(page_instance: ft.Page, status_text: ft.Text):
     """ 認証情報ファイルを作成する処理 """
@@ -31,7 +243,31 @@ def do_login(page_instance: ft.Page, status_text: ft.Text):
             page.goto("https://www.street-academy.com/d/users/sign_in")
             update_status("ブラウザでログインしてください...", "black")
             
-            page.wait_for_url("https://www.street-academy.com/dashboard/steachers", timeout=300000)
+            # ログイン後の画面を待機（個人用と主催団体用の両方に対応）
+            try:
+                # 個人用と主催団体用のダッシュボードのどちらかを待機
+                page.wait_for_url(
+                    lambda url: url.startswith("https://www.street-academy.com/dashboard/steachers") or 
+                               url.startswith("https://www.street-academy.com/dashboard/organizers"),
+                    timeout=300000
+                )
+                
+                # 実際に遷移したURLを確認してメッセージを表示
+                current_url = page.url
+                if current_url.startswith("https://www.street-academy.com/dashboard/steachers"):
+                    update_status("個人用ダッシュボードにログインしました", "blue")
+                elif current_url.startswith("https://www.street-academy.com/dashboard/organizers"):
+                    update_status("主催団体用ダッシュボードにログインしました", "blue")
+                else:
+                    update_status(f"ダッシュボードにログインしました: {current_url}", "blue")
+                    
+            except Exception as e:
+                # その他のダッシュボードページも確認
+                current_url = page.url
+                if current_url.startswith("https://www.street-academy.com/dashboard/"):
+                    update_status(f"ダッシュボードにログインしました: {current_url}", "blue")
+                else:
+                    raise Exception(f"ログイン後のダッシュボードページに遷移しませんでした: {e}")
             
             context.storage_state(path=AUTH_FILE_PATH)
             browser.close()
@@ -58,7 +294,7 @@ def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *a
 def add_schedules_logic(log, urls, contact, schedules_text):
     """個別日程で日程を追加するロジック"""
     log("個別日程による日程追加を開始します...")
-    schedules = parse_custom_schedules(schedules_text)
+    schedules = ScheduleHelper.parse_custom_schedules(schedules_text)
     if not schedules:
         log("有効な日程が入力されていません。\n例: 2025-08-27\t14:00~15:30")
         return
@@ -71,12 +307,8 @@ def add_schedules_logic(log, urls, contact, schedules_text):
     
     log(f"処理対象のURL数: {len(url_list)}")
     
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        if not os.path.exists(AUTH_FILE_PATH):
-            log("エラー: 認証ファイル 'playwright_auth.json' が見つかりません。")
-            return
-        context = browser.new_context(storage_state=AUTH_FILE_PATH)
+    try:
+        playwright, browser, context = PlaywrightHelper.create_browser_context()
         page = context.new_page()
         
         for url_index, url in enumerate(url_list, 1):
@@ -86,7 +318,7 @@ def add_schedules_logic(log, urls, contact, schedules_text):
                 page.goto(url)
                 expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
 
-                # オンライン選択肢があれば選択（既存ロジック流用）
+                # オンライン選択肢があれば選択
                 online_radio_button = page.locator("#is_online_check")
                 if online_radio_button.is_visible():
                     log("開催形式の選択肢を検出。「オンライン」を選択します。")
@@ -120,23 +352,12 @@ def add_schedules_logic(log, urls, contact, schedules_text):
                 expect(button1.or_(button2).first).to_be_visible(timeout=20000)
                 log(f"--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} の日程追加が完了しました！ ---")
                 time.sleep(3)
-        browser.close()
+    except Exception as e:
+        log(f"エラーが発生しました: {e}")
+    finally:
+        if 'browser' in locals():
+            browser.close()
         log("\nすべての処理が完了しました。")
-
-
-def parse_custom_schedules(text):
-    """個別日程リストのテキストをパースして [(date, start, end)] のリストにする"""
-    result = []
-    for line in text.strip().splitlines():
-        if not line.strip():
-            continue
-        try:
-            date_part, time_part = line.strip().split('\t')
-            start_time, end_time = time_part.split('~')
-            result.append((date_part.strip(), start_time.strip(), end_time.strip()))
-        except Exception:
-            continue
-    return result
 
 def add_continuous_schedules_logic(log, urls, contact, start_str, end_str):
     """ 連続日程追加のロジック """
@@ -152,12 +373,8 @@ def add_continuous_schedules_logic(log, urls, contact, start_str, end_str):
     
     log(f"処理対象のURL数: {len(url_list)}")
     
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        if not os.path.exists(AUTH_FILE_PATH):
-            log("エラー: 認証ファイル 'playwright_auth.json' が見つかりません。")
-            return
-        context = browser.new_context(storage_state=AUTH_FILE_PATH)
+    try:
+        playwright, browser, context = PlaywrightHelper.create_browser_context()
         page = context.new_page()
 
         for url_index, url in enumerate(url_list, 1):
@@ -167,10 +384,8 @@ def add_continuous_schedules_logic(log, urls, contact, start_str, end_str):
                 page.goto(url)
                 expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
 
-                # 「オンライン」のラジオボタンをIDで特定
+                # 「オンライン」のラジオボタンを選択
                 online_radio_button = page.locator("#is_online_check")
-                
-                # ラジオボタンが表示されているか（=対面/オンラインの選択肢があるか）を確認
                 if online_radio_button.is_visible():
                     log("開催形式の選択肢を検出。「オンライン」を選択します。")
                     online_radio_button.check()
@@ -207,13 +422,16 @@ def add_continuous_schedules_logic(log, urls, contact, start_str, end_str):
                 
                 log(f"--- {single_date.strftime('%Y-%m-%d')} の日程追加が完了しました！ ---")
                 time.sleep(3)
-        
-        browser.close()
+    except Exception as e:
+        log(f"エラーが発生しました: {e}")
+    finally:
+        if 'browser' in locals():
+            browser.close()
         log("\nすべての処理が完了しました。")
 
 def delete_schedules_logic(log, start_str, end_str, class_names_str):
-    """ 講座名でフィルタリングして日程を削除する """
-    log("日程削除処理を開始します...")
+    """ 連続日程削除のロジック """
+    log("連続日程削除処理を開始します...")
     target_class_names = [name.strip() for name in class_names_str.strip().split('\n') if name.strip()]
     if not target_class_names:
         log("エラー: 削除対象の講座名が入力されていません。")
@@ -223,123 +441,36 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
     start_date = date.fromisoformat(start_str)
     end_date = date.fromisoformat(end_str)
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        if not os.path.exists(AUTH_FILE_PATH):
-            log("エラー: 認証ファイル 'playwright_auth.json' が見つかりません。")
-            return
-        context = browser.new_context(storage_state=AUTH_FILE_PATH)
+    try:
+        playwright, browser, context = PlaywrightHelper.create_browser_context()
         page = context.new_page()
 
         for single_date in daterange(start_date, end_date):
-            date_param = single_date.strftime('%Y-%-m-%-d')
-            ### 主催団体用
-            base_url = f"https://www.street-academy.com/dashboard/organizers/schedule_list?date={date_param}"
-            ### 個人用
-            # base_url = f"https://www.street-academy.com/dashboard/steachers/manage_class_dates?date={date_param}"
             log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程削除を開始します ---")
+            date_param = URLHelper.format_date_param(single_date)
+            base_url = URLHelper.build_schedule_url(date_param)
 
-            next_url = base_url
-            found_any = False
-            while True:
-                url = next_url
-                log(f"アクセス中: {url}")
+            # 共通化されたページング処理を使用
+            log(f"アクセス中: {base_url}")
+            page.goto(base_url, timeout=60000)
+            if not PlaywrightHelper.handle_403_forbidden(page, log):
+                continue
 
-                # 403 Forbidden検知＆リトライ
-                for retry in range(3):  # 最大3回リトライ
-                    page.goto(url, timeout=60000)
-                    body_html = page.content()
-                    if "403 Forbidden" in body_html:
-                        log("403 Forbidden画面を検知。2分間待機してリトライします。")
-                        time.sleep(120)
-                    else:
-                        break
-                else:
-                    log("403 Forbiddenが解消しませんでした。次の日付へ進みます。")
-                    break
-
-                log("ページの読み込みを待っています...")
-                schedule_links_locator = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
-                no_schedule_text_locator = page.locator("text=講座がありません")
-
-                # どちらかが見つかるまで最大2秒待つ
-                found = False
-                for _ in range(2):
-                    if schedule_links_locator.count() > 0 or no_schedule_text_locator.count() > 0:
-                        found = True
-                        break
-                    time.sleep(2)
-                if not found:
-                    log("日程リンクも「講座がありません」も見つかりませんでした。次の日付へ進みます。")
-                    break
-
-                log("ページの読み込み完了。")
-                all_schedule_links = schedule_links_locator
-
-                if all_schedule_links.count() == 0:
-                    # ページ内に日程がなければ、次ページがあるか確認して終了判定
-                    next_button = page.locator('a[rel="next"]')
-                    if next_button.count() > 0:
-                        href = next_button.first.get_attribute('href')
-                        if href:
-                            next_url = "https://www.street-academy.com" + href
-                            continue
-                    if not found_any:
-                        log("この日付に削除可能な日程はありません。")
-                    break
-
-                target_link = None
-                for i in range(all_schedule_links.count()):
-                    link = all_schedule_links.nth(i)
-                    link_text = link.inner_text()
-                    if any(class_name in link_text for class_name in target_class_names):
-                        target_link = link
-                        break
-
-                if target_link is None:
-                    # 次ページがあれば巡回、なければ終了
-                    next_button = page.locator('a[rel="next"]')
-                    if next_button.count() > 0:
-                        href = next_button.first.get_attribute('href')
-                        if href:
-                            next_url = "https://www.street-academy.com" + href
-                            continue
-                    if not found_any:
-                        log("この日付に削除対象の講座はありませんでした。")
-                    break
-
-                found_any = True
-                target_text = target_link.inner_text()
-                target_text_clean = target_text.strip().replace('\n', ' ')
-                log(f"  - 削除対象: {target_text_clean}")
-                target_link.click()
-                time.sleep(5)
-
-                cancel_button_1 = page.get_by_role("link", name="開催をキャンセルする")
-                expect(cancel_button_1).to_be_visible()
-                cancel_button_1.click()
-                time.sleep(5)
-
-                modal_cancel_button = page.locator("#sa-modal-cancel").get_by_role("button", name="開催キャンセル")
-                expect(modal_cancel_button).to_be_visible()
-
-                page.once("dialog", lambda dialog: (time.sleep(5), dialog.accept()))
-                modal_cancel_button.click()
-
-                log("  - キャンセル処理を実行しました。")
-                time.sleep(3)
-                # 削除後は同じページを再読込して再度巡回
-                # ページングのためnext_urlをリセット（同じページを再読込）
-                next_url = url
-
-            # 次の日付へ
-        browser.close()
+            found_any = ScheduleHelper.find_and_delete_schedules(page, log, target_class_names, None)
+            
+            if not found_any:
+                log("この日付に削除対象の講座はありませんでした。")
+    except Exception as e:
+        log(f"エラーが発生しました: {e}")
+    finally:
+        if 'browser' in locals():
+            browser.close()
         log("\nすべての処理が完了しました。")
 
 def delete_custom_schedules_logic(log, schedules_text, class_names_str):
     """個別日程で日程を削除するロジック"""
     log("個別日程による日程削除を開始します...")
-    schedules = parse_custom_schedules(schedules_text)
+    schedules = ScheduleHelper.parse_custom_schedules(schedules_text)
     if not schedules:
         log("有効な日程が入力されていません。\n例: 2025-08-27\t14:00~15:30")
         return
@@ -351,12 +482,8 @@ def delete_custom_schedules_logic(log, schedules_text, class_names_str):
     
     log(f"削除対象の講座名: {', '.join(target_class_names)}")
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        if not os.path.exists(AUTH_FILE_PATH):
-            log("エラー: 認証ファイル 'playwright_auth.json' が見つかりません。")
-            return
-        context = browser.new_context(storage_state=AUTH_FILE_PATH)
+    try:
+        playwright, browser, context = PlaywrightHelper.create_browser_context()
         page = context.new_page()
 
         for schedule_index, (date_str, start_str, end_str) in enumerate(schedules, 1):
@@ -364,123 +491,30 @@ def delete_custom_schedules_logic(log, schedules_text, class_names_str):
             
             # 日付パラメータを作成
             target_date = date.fromisoformat(date_str)
-            date_param = target_date.strftime('%Y-%-m-%-d')
-            
-            ### 主催団体用
-            base_url = f"https://www.street-academy.com/dashboard/organizers/schedule_list?date={date_param}"
-            ### 個人用
-            # base_url = f"https://www.street-academy.com/dashboard/steachers/manage_class_dates?date={date_param}"
+            date_param = URLHelper.format_date_param(target_date)
+            base_url = URLHelper.build_schedule_url(date_param)
             
             found_schedule = False
             
-            # 削除対象の講座がすべて削除されるまで繰り返し
-            while True:
-                # 講座一覧ページにアクセス
-                log(f"アクセス中: {base_url}")
+            # 共通化されたページング処理を使用
+            log(f"アクセス中: {base_url}")
+            page.goto(base_url, timeout=60000)
+            if not PlaywrightHelper.handle_403_forbidden(page, log):
+                continue
 
-                # 403 Forbidden検知＆リトライ
-                for retry in range(3):  # 最大3回リトライ
-                    page.goto(base_url, timeout=60000)
-                    body_html = page.content()
-                    if "403 Forbidden" in body_html:
-                        log("403 Forbidden画面を検知。2分間待機してリトライします。")
-                        time.sleep(120)
-                    else:
-                        break
-                else:
-                    log("403 Forbiddenが解消しませんでした。次の日程へ進みます。")
-                    break
-
-                log("ページの読み込みを待っています...")
-                schedule_links_locator = page.locator('a.dashboard-session_container[href*="/show_attendance?sessiondetailid="]')
-                no_schedule_text_locator = page.locator("text=講座がありません")
-
-                # どちらかが見つかるまで最大2秒待つ
-                found = False
-                for _ in range(2):
-                    if schedule_links_locator.count() > 0 or no_schedule_text_locator.count() > 0:
-                        found = True
-                        break
-                    time.sleep(2)
-                if not found:
-                    log("日程リンクも「講座がありません」も見つかりませんでした。次の日程へ進みます。")
-                    break
-
-                log("ページの読み込み完了。")
-                all_schedule_links = schedule_links_locator
-
-                if all_schedule_links.count() == 0:
-                    log("この日付に削除可能な日程はありません。")
-                    break
-
-                # 削除対象の講座を探す
-                target_link = None
-                for i in range(all_schedule_links.count()):
-                    try:
-                        link = all_schedule_links.nth(i)
-                        link_text = link.inner_text()
-                        
-                        # 講座名の一致を確認
-                        if not any(class_name in link_text for class_name in target_class_names):
-                            continue
-                        
-                        # 開始時刻の情報を抽出（例: "20:00" のような形式）
-                        import re
-                        time_match = re.search(r'(\d{1,2}):(\d{2})', link_text)
-                        if time_match:
-                            start_hour, start_min = map(int, time_match.groups())
-                            link_start_time = f"{start_hour:02d}:{start_min:02d}"
-                            
-                            # 開始時刻が一致するかチェック
-                            if link_start_time == start_str:
-                                target_link = link
-                                break
-                    except Exception as e:
-                        log(f"  - 講座情報の取得中にエラーが発生しました: {e}")
-                        continue
-
-                # 削除対象の講座が見つからない場合は終了
-                if target_link is None:
-                    if not found_schedule:
-                        log(f"講座名と開始時刻 {start_str} に一致する日程が見つかりませんでした。")
-                    break
-
-                # 削除処理を実行
-                try:
-                    target_text = target_link.inner_text()
-                    target_text_clean = target_text.strip().replace('\n', ' ')
-                    log(f"  - 削除対象: {target_text_clean}")
-                    
-                    target_link.click()
-                    time.sleep(5)
-
-                    cancel_button_1 = page.get_by_role("link", name="開催をキャンセルする")
-                    expect(cancel_button_1).to_be_visible()
-                    cancel_button_1.click()
-                    time.sleep(5)
-
-                    modal_cancel_button = page.locator("#sa-modal-cancel").get_by_role("button", name="開催キャンセル")
-                    expect(modal_cancel_button).to_be_visible()
-
-                    page.once("dialog", lambda dialog: (time.sleep(5), dialog.accept()))
-                    modal_cancel_button.click()
-
-                    log(f"  - 日程削除が完了しました！")
-                    time.sleep(3)
-                    found_schedule = True
-                    
-                    # 削除処理が完了したら、講座一覧ページに戻って再度削除対象を探す
-                    continue
-                    
-                except Exception as e:
-                    log(f"  - 削除処理中にエラーが発生しました: {e}")
-                    break
+            found_schedule = ScheduleHelper.find_and_delete_schedules(page, log, target_class_names, start_str)
+            
+            if not found_schedule:
+                log(f"講座名と開始時刻 {start_str} に一致する日程が見つかりませんでした。")
 
             # 日程が見つからなかった場合のログ
             if not found_schedule:
                 log(f"日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} は見つかりませんでした。")
-
-        browser.close()
+    except Exception as e:
+        log(f"エラーが発生しました: {e}")
+    finally:
+        if 'browser' in locals():
+            browser.close()
         log("\nすべての処理が完了しました。")
 
 def daterange(start_date, end_date):
