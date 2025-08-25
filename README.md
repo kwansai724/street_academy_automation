@@ -164,9 +164,13 @@ EMERGENCY_CONTACT = '090-1234-5678'
 
 # ②：追加したい時間帯 (8時〜22時でよければ変更不要)
 HOURS_TO_ADD = list(range(8, 23)) 
+
+# ③：主催団体向けか個人講師向けかの設定
+# 主催団体向け講座の場合は True, 個人講師向け講座の場合は False に設定してください
+IS_ORGANIZER = True
 ```
 
-【重要】 `app.py`を開き、先頭部分の**設定項目（`EMERGENCY_CONTACT`）**を自分の情報に必ず書き換えてください。
+【重要】 `app.py`を開き、先頭部分の**設定項目（`EMERGENCY_CONTACT`, `IS_ORGANIZER`）**を自分の情報に必ず書き換えてください。
 
 ---
 

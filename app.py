@@ -10,10 +10,13 @@ import re
 AUTH_FILE_PATH = 'playwright_auth.json'
 
 # ①：あなたの緊急連絡先(電話番号)に書き換えてください
-EMERGENCY_CONTACT = '090-1234-5678' 
+EMERGENCY_CONTACT = '090-1234-5678'
 
 # ②：追加したい時間帯 (8時〜22時でよければ変更不要)
-HOURS_TO_ADD = list(range(8, 23)) 
+HOURS_TO_ADD = list(range(8, 23))
+
+# ③：主催団体かどうかの定数
+IS_ORGANIZER = True  # Falseにすれば個人講師用URLになる
 
 # 共通設定
 BASE_URL = "https://www.street-academy.com"
@@ -217,7 +220,7 @@ class URLHelper:
     """URL関連の共通処理を提供するヘルパークラス"""
     
     @staticmethod
-    def build_schedule_url(date_param, is_organizer=True):
+    def build_schedule_url(date_param, is_organizer=IS_ORGANIZER):
         """日程一覧のURLを構築"""
         base_url = ORGANIZER_SCHEDULE_URL if is_organizer else TEACHER_SCHEDULE_URL
         return f"{base_url}?date={date_param}"
