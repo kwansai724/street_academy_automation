@@ -146,6 +146,25 @@ class ScheduleHelper:
             link.click()
             time.sleep(5)
 
+            # 予約状況を確認
+            try:
+                booking_status_dd = page.locator("dt.show-attendance-info_label:has-text('予約状況') + dd")
+                if booking_status_dd.count() > 0:
+                    status_text = booking_status_dd.inner_text()
+                    participant_count_str = status_text.split('/')[0].strip()
+                    if participant_count_str.isdigit():
+                        participant_count = int(participant_count_str)
+                        if participant_count > 0:
+                            log_func(f"  - 予約者が {participant_count} 人いるため、削除をスキップします。")
+                            page.goto(original_url, timeout=60000)
+                            time.sleep(3)
+                            return False # スキップしたことを呼び出し元に伝える
+            except Exception as e:
+                log_func(f"  - 予約状況の確認中にエラーが発生しました: {e}")
+                # 念のため一覧に戻る
+                page.goto(original_url, timeout=60000)
+                return False
+
             cancel_button_1 = page.get_by_role("link", name="開催をキャンセルする")
             expect(cancel_button_1).to_be_visible()
             cancel_button_1.click()
