@@ -81,6 +81,26 @@ class ScheduleHelper:
         return result
     
     @staticmethod
+    def parse_delete_schedules(text):
+        """個別日程削除用のテキストをパースして [(date, start)] のリストにする"""
+        result = []
+        for line in text.strip().splitlines():
+            if not line.strip():
+                continue
+            try:
+                # 全角スペースを半角スペースに置換し、正規表現で分割
+                line = line.replace('　', ' ')
+                parts = re.split(r'\s+', line.strip())
+                if len(parts) == 2:
+                    date_part, time_part = parts
+                    # フォーマットを簡易チェック
+                    if re.match(r'^\d{4}-\d{1,2}-\d{1,2}$', date_part) and re.match(r'^\d{1,2}:\d{2}$', time_part):
+                        result.append((date_part, time_part))
+            except Exception:
+                continue
+        return result
+    
+    @staticmethod
     def extract_time_from_text(text):
         """テキストから開始時刻を抽出"""
         time_match = re.search(r'(\d{1,2}):(\d{2})', text)
@@ -473,9 +493,9 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
 def delete_custom_schedules_logic(log, schedules_text, class_names_str):
     """個別日程で日程を削除するロジック"""
     log("個別日程による日程削除を開始します...")
-    schedules = ScheduleHelper.parse_custom_schedules(schedules_text)
+    schedules = ScheduleHelper.parse_delete_schedules(schedules_text)
     if not schedules:
-        log("有効な日程が入力されていません。\n例: 2025-08-27\t14:00~15:30")
+        log("有効な日程が入力されていません。\n例: 2025-08-27 14:00")
         return
     
     target_class_names = [name.strip() for name in class_names_str.strip().split('\n') if name.strip()]
@@ -489,8 +509,8 @@ def delete_custom_schedules_logic(log, schedules_text, class_names_str):
         playwright, browser, context = PlaywrightHelper.create_browser_context()
         page = context.new_page()
 
-        for schedule_index, (date_str, start_str, end_str) in enumerate(schedules, 1):
-            log(f"\n--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} を削除します ---")
+        for schedule_index, (date_str, start_str) in enumerate(schedules, 1):
+            log(f"\n--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str} を削除します ---")
             
             # 日付パラメータを作成
             target_date = date.fromisoformat(date_str)
@@ -512,7 +532,7 @@ def delete_custom_schedules_logic(log, schedules_text, class_names_str):
 
             # 日程が見つからなかった場合のログ
             if not found_schedule:
-                log(f"日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} は見つかりませんでした。")
+                log(f"日程 {schedule_index}/{len(schedules)}: {date_str} {start_str} は見つかりませんでした。")
     except Exception as e:
         log(f"エラーが発生しました: {e}")
     finally:
@@ -667,11 +687,11 @@ def main(page: ft.Page):
 
     # --- 個別日程削除用UI ---
     delete_custom_schedules_input = ft.TextField(
-        label="削除対象の日程リスト (例: 2025-08-27\t14:00~15:30)",
+        label="削除対象の日程リスト (例: 2025-08-27 14:00)",
         multiline=True,
         min_lines=3,
         width=600,
-        hint_text="例:\n2025-08-27\t14:00~15:30\n2025-08-28\t12:00~14:00",
+        hint_text="例:\n2025-08-27 14:00\n2025-08-28 12:00",
         hint_style=ft.TextStyle(color="#bbbbbb")
     )
     delete_custom_button = ft.ElevatedButton("個別日程削除", bgcolor="orange", color="white")
