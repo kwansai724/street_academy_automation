@@ -267,7 +267,7 @@ class URLHelper:
     @staticmethod
     def format_date_param(target_date):
         """日付パラメータをフォーマット"""
-        return target_date.strftime('%Y-%-m-%-d')
+        return f"{target_date.year}-{target_date.month}-{target_date.day}"
 
 def do_login(page_instance: ft.Page, status_text: ft.Text):
     """ 認証情報ファイルを作成する処理 """
