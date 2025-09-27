@@ -145,6 +145,18 @@ python -m venv .venv
     ```powershell
     .\.venv\Scripts\activate
     ```
+    > **エラーが出る場合:**  
+    > `このシステムではスクリプトの実行が無効になっているため...` というエラーが表示された場合は、以下の手順で実行ポリシーを変更してください。この操作はPC全体の設定変更のため、**最初の1回だけ**でOKです。
+    > 
+    > 1. **スタートメニュー**で「PowerShell」と検索します。
+    > 2. 「Windows PowerShell」を**右クリック**し、「**管理者として実行**」を選択します。
+    > 3. 管理者権限で開いたPowerShellで、以下のコマンドを実行します。
+    >    ```powershell
+    >    Set-ExecutionPolicy RemoteSigned
+    >    ```
+    > 4. 確認メッセージが表示されたら `Y` を入力してEnterキーを押します。
+    > 
+    > この後、通常のPowerShellウィンドウに戻り、再度 `.\.venv\Scripts\activate` を実行してください。
 実行後、コマンドプロンプトの行頭に `(.venv)` と表示されればOKです。
 
 #### 1-4. 必要なライブラリのインストール (Mac / Windows共通)
