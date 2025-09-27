@@ -67,15 +67,26 @@ class ScheduleHelper:
     
     @staticmethod
     def parse_custom_schedules(text):
-        """個別日程リストのテキストをパースして [(date, start, end)] のリストにする"""
+        """個別日程リストのテキストをパースして [(classdetailid, date, start, end, capacity, price, contact)] のリストにする"""
         result = []
         for line in text.strip().splitlines():
             if not line.strip():
                 continue
             try:
-                date_part, time_part = line.strip().split('\t')
+                parts = line.strip().split('\t')
+                if len(parts) != 6:
+                    continue
+                classdetailid, date_part, time_part, capacity_part, price_part, contact_part = parts
                 start_time, end_time = time_part.split('~')
-                result.append((date_part.strip(), start_time.strip(), end_time.strip()))
+                result.append((
+                    classdetailid.strip(),
+                    date_part.strip(),
+                    start_time.strip(),
+                    end_time.strip(),
+                    capacity_part.strip(),
+                    price_part.strip(),
+                    contact_part.strip()
+                ))
             except Exception:
                 continue
         return result
@@ -333,67 +344,71 @@ def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *a
         log(f"予期せぬエラーが発生しました: {e}")
         print(f"エラー詳細: {e}")
 
-def add_schedules_logic(log, urls, contact, schedules_text):
+def add_schedules_logic(log, schedules_text):
     """個別日程で日程を追加するロジック"""
     log("個別日程による日程追加を開始します...")
     schedules = ScheduleHelper.parse_custom_schedules(schedules_text)
     if not schedules:
-        log("有効な日程が入力されていません。\n例: 2025-08-27\t14:00~15:30")
+        log("有効な日程が入力されていません。\n例: 123456\t2025-08-27\t14:00~15:30\t3\t5000\t090-1234-5678")
         return
     
-    # URLを改行区切りで分割
-    url_list = [url.strip() for url in urls.strip().split('\n') if url.strip()]
-    if not url_list:
-        log("エラー: 有効なURLが入力されていません。")
-        return
-    
-    log(f"処理対象のURL数: {len(url_list)}")
+    log(f"処理対象の日程数: {len(schedules)}")
     
     try:
         playwright, browser, context = PlaywrightHelper.create_browser_context()
         page = context.new_page()
         
-        for url_index, url in enumerate(url_list, 1):
-            log(f"\n=== URL {url_index}/{len(url_list)}: {url} ===")
-            for schedule_index, (date_str, start_str, end_str) in enumerate(schedules, 1):
-                log(f"\n--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} を追加します ---")
-                page.goto(url)
-                expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
+        for schedule_index, (classdetailid, date_str, start_str, end_str, capacity_str, price_str, contact_str) in enumerate(schedules, 1):
+            url = f"https://www.street-academy.com/session_details/new_multi_session?classdetailid={classdetailid}"
+            log(f"\n--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} (講座ID: {classdetailid}) を追加します ---")
+            page.goto(url)
+            expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
 
-                # オンライン選択肢があれば選択
-                online_radio_button = page.locator("#is_online_check")
-                if online_radio_button.is_visible():
-                    log("開催形式の選択肢を検出。「オンライン」を選択します。")
-                    online_radio_button.check()
-                    expect(online_radio_button).to_be_checked()
-                    log("「オンライン」を選択しました。")
+            # オンライン選択肢があれば選択
+            online_radio_button = page.locator("#session_detail_multi_form_is_online_true")
+            if online_radio_button.is_visible():
+                log("開催形式の選択肢を検出。「オンライン」を選択します。")
+                online_radio_button.check()
+                expect(online_radio_button).to_be_checked()
+                log("「オンライン」を選択しました。")
 
-                first_block = page.locator('div[data-repeater-item]').first
-                y, m, d = map(int, date_str.split('-'))
-                first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(y))
-                first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(m))
-                first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(d))
-                start_hour, start_min = map(int, start_str.split(':'))
-                end_hour, end_min = map(int, end_str.split(':'))
-                first_block.locator('select.js_start_time_hour').select_option(str(start_hour))
-                first_block.locator('select.js_start_time_minute').select_option(str(start_min))
-                first_block.locator('select.js_end_time_hour').select_option(str(end_hour))
-                first_block.locator('select.js_end_time_minute').select_option(str(end_min))
-                log(f"{start_hour:02d}:{start_min:02d} - {end_hour:02d}:{end_min:02d} の日程を設定しました。")
+            # 定員を設定 (日程より前に設定)
+            page.locator("#session_detail_multi_form_session_capacity").fill(capacity_str)
+            log(f"定員を {capacity_str} に設定しました。")
 
-                page.locator("#session_detail_multi_form_emergency_contact").fill(contact)
-                time.sleep(1)
-                page.get_by_role("button", name="プレビュー画面で確認").click()
-                confirm_button = page.get_by_role("button", name="確定")
-                expect(confirm_button).to_be_visible(timeout=15000)
-                time.sleep(1)
-                confirm_button.click()
-                log("完了ページへの遷移を待っています...")
-                button1 = page.get_by_role("link", name="集客する")
-                button2 = page.get_by_role("link", name="日程追加")
-                expect(button1.or_(button2).first).to_be_visible(timeout=20000)
-                log(f"--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} の日程追加が完了しました！ ---")
-                time.sleep(3)
+            first_block = page.locator('div[data-repeater-item]').first
+            y, m, d = map(int, date_str.split('-'))
+            first_block.locator('select[name*="[session_startdate_year]"]').select_option(str(y))
+            first_block.locator('select[name*="[session_startdate_month]"]').select_option(str(m))
+            first_block.locator('select[name*="[session_startdate_day]"]').select_option(str(d))
+            start_hour, start_min = map(int, start_str.split(':'))
+            end_hour, end_min = map(int, end_str.split(':'))
+            first_block.locator('select.js_start_time_hour').select_option(str(start_hour))
+            first_block.locator('select.js_start_time_minute').select_option(str(start_min))
+            first_block.locator('select.js_end_time_hour').select_option(str(end_hour))
+            first_block.locator('select.js_end_time_minute').select_option(str(end_min))
+            log(f"{start_hour:02d}:{start_min:02d} - {end_hour:02d}:{end_min:02d} の日程を設定しました。")
+
+            # 受講料を設定
+            page.locator("#session_detail_multi_form_cost").fill(price_str)
+            log(f"受講料を {price_str} 円に設定しました。")
+
+            # 緊急連絡先を設定
+            page.locator("#session_detail_multi_form_emergency_contact").fill(contact_str)
+            log(f"緊急連絡先を {contact_str} に設定しました。")
+
+            time.sleep(1)
+            page.get_by_role("button", name="プレビュー画面で確認").click()
+            confirm_button = page.get_by_role("button", name="確定")
+            expect(confirm_button).to_be_visible(timeout=15000)
+            time.sleep(1)
+            confirm_button.click()
+            log("完了ページへの遷移を待っています...")
+            button1 = page.get_by_role("link", name="集客する")
+            button2 = page.get_by_role("link", name="日程追加")
+            expect(button1.or_(button2).first).to_be_visible(timeout=20000)
+            log(f"--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} の日程追加が完了しました！ ---")
+            time.sleep(3)
     except Exception as e:
         log(f"エラーが発生しました: {e}")
     finally:
@@ -614,11 +629,11 @@ def main(page: ft.Page):
 
     # --- 個別日程追加用UI ---
     custom_schedules_input = ft.TextField(
-        label="個別日程リスト (例: 2025-08-27\t14:00~15:30)",
+        label="個別日程リスト (講座ID\t日付\t開始~終了\t定員\t料金\t連絡先)",
         multiline=True,
-        min_lines=3,
+        min_lines=5,
         width=600,
-        hint_text="例:\n2025-08-27\t14:00~15:30\n2025-08-28\t12:00~14:00",
+        hint_text="例:\n123456\t2025-08-27\t14:00~15:30\t3\t5000\t090-1234-5678\n789012\t2025-08-28\t12:00~14:00\t5\t3000\t090-9876-5432",
         hint_style=ft.TextStyle(color="#bbbbbb")
     )
     add_custom_button = ft.ElevatedButton("個別日程追加", bgcolor="green", color="white")
@@ -650,7 +665,7 @@ def main(page: ft.Page):
         set_add_running(True)
         def wrapped():
             try:
-                run_playwright_task(page, log_view, add_schedules_logic, url_input.value, contact_input.value, custom_schedules_input.value)
+                run_playwright_task(page, log_view, add_schedules_logic, custom_schedules_input.value)
             finally:
                 set_add_running(False)
         run_in_thread(wrapped)
@@ -664,8 +679,6 @@ def main(page: ft.Page):
         add_button
     ])
     custom_add_form = ft.Column([
-        url_input,
-        contact_input,
         custom_schedules_input,
         add_custom_button
     ])
