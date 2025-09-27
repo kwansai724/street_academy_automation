@@ -67,16 +67,21 @@ class ScheduleHelper:
     
     @staticmethod
     def parse_custom_schedules(text):
-        """個別日程リストのテキストをパースして [(classdetailid, date, start, end, capacity, price, contact)] のリストにする"""
+        """個別日程リストのテキストをパースして [(classdetailid, date, start, end, capacity, price, deadline, contact)] のリストにする"""
         result = []
-        for line in text.strip().splitlines():
+        lines = text.strip().splitlines()
+        # ヘッダー行があればスキップ
+        if lines and "講座ID" in lines[0]:
+            lines = lines[1:]
+
+        for line in lines:
             if not line.strip():
                 continue
             try:
                 parts = line.strip().split('\t')
-                if len(parts) != 6:
+                if len(parts) != 7:
                     continue
-                classdetailid, date_part, time_part, capacity_part, price_part, contact_part = parts
+                classdetailid, date_part, time_part, capacity_part, price_part, deadline_part, contact_part = parts
                 start_time, end_time = time_part.split('~')
                 result.append((
                     classdetailid.strip(),
@@ -85,6 +90,7 @@ class ScheduleHelper:
                     end_time.strip(),
                     capacity_part.strip(),
                     price_part.strip(),
+                    deadline_part.strip(),
                     contact_part.strip()
                 ))
             except Exception:
@@ -349,7 +355,7 @@ def add_schedules_logic(log, schedules_text):
     log("個別日程による日程追加を開始します...")
     schedules = ScheduleHelper.parse_custom_schedules(schedules_text)
     if not schedules:
-        log("有効な日程が入力されていません。\n例: 123456\t2025-08-27\t14:00~15:30\t3\t5000\t090-1234-5678")
+        log("有効な日程が入力されていません。\n例: 123456\t2025-08-27\t14:00~15:30\t3\t5000\t1日前\t090-1234-5678")
         return
     
     log(f"処理対象の日程数: {len(schedules)}")
@@ -358,7 +364,7 @@ def add_schedules_logic(log, schedules_text):
         playwright, browser, context = PlaywrightHelper.create_browser_context()
         page = context.new_page()
         
-        for schedule_index, (classdetailid, date_str, start_str, end_str, capacity_str, price_str, contact_str) in enumerate(schedules, 1):
+        for schedule_index, (classdetailid, date_str, start_str, end_str, capacity_str, price_str, deadline_str, contact_str) in enumerate(schedules, 1):
             url = f"https://www.street-academy.com/session_details/new_multi_session?classdetailid={classdetailid}"
             log(f"\n--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} (講座ID: {classdetailid}) を追加します ---")
             page.goto(url)
@@ -388,6 +394,28 @@ def add_schedules_logic(log, schedules_text):
             first_block.locator('select.js_end_time_hour').select_option(str(end_hour))
             first_block.locator('select.js_end_time_minute').select_option(str(end_min))
             log(f"{start_hour:02d}:{start_min:02d} - {end_hour:02d}:{end_min:02d} の日程を設定しました。")
+
+            # 締め切り日時を設定
+            try:
+                if '日前' in deadline_str:
+                    value = deadline_str.replace('日前', '').strip()
+                    page.locator("#session_detail_multi_form_select_deadline_type_0").check()
+                    page.locator("#session_detail_multi_form_deadline_days_ago").fill(value)
+                    log(f"締め切りを {value} 日前に設定しました。")
+                elif '時間前' in deadline_str:
+                    value = deadline_str.replace('時間前', '').strip()
+                    page.locator("#session_detail_multi_form_select_deadline_type_1").check()
+                    page.locator("#session_detail_multi_form_deadline_hours_ago").fill(value)
+                    log(f"締め切りを {value} 時間前に設定しました。")
+                elif '分前' in deadline_str:
+                    value = deadline_str.replace('分前', '').strip()
+                    page.locator("#session_detail_multi_form_select_deadline_type_2").check()
+                    page.locator("#session_detail_multi_form_deadline_minutes_ago").fill(value)
+                    log(f"締め切りを {value} 分前に設定しました。")
+                else:
+                    log(f"警告: 解析できない締め切りフォーマットです: {deadline_str}")
+            except Exception as e:
+                log(f"締め切り日時の設定中にエラーが発生しました: {e}")
 
             # 受講料を設定
             page.locator("#session_detail_multi_form_cost").fill(price_str)
@@ -629,11 +657,11 @@ def main(page: ft.Page):
 
     # --- 個別日程追加用UI ---
     custom_schedules_input = ft.TextField(
-        label="個別日程リスト (講座ID\t日付\t開始~終了\t定員\t料金\t連絡先)",
+        label="個別日程リスト (講座ID\t日付\t開始~終了\t定員\t料金\t締切\t連絡先)",
         multiline=True,
         min_lines=5,
         width=600,
-        hint_text="例:\n123456\t2025-08-27\t14:00~15:30\t3\t5000\t090-1234-5678\n789012\t2025-08-28\t12:00~14:00\t5\t3000\t090-9876-5432",
+        hint_text="講座ID\t日程\t時間\t定員\t受講料\t締め切り日時\t緊急連絡先\n123456\t2025-08-27\t14:00~15:30\t3\t5000\t1日前\t090-1234-5678",
         hint_style=ft.TextStyle(color="#bbbbbb")
     )
     add_custom_button = ft.ElevatedButton("個別日程追加", bgcolor="green", color="white")
