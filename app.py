@@ -486,7 +486,7 @@ def add_schedules_logic(log, page_instance, schedules_text):
             browser.close()
         log("\nすべての処理が完了しました。")
 
-def add_continuous_schedules_logic(log, urls, contact, start_str, end_str):
+def add_continuous_schedules_logic(log, page_instance, urls, contact, start_str, end_str):
     """ 連続日程追加のロジック """
     log("連続日程追加処理を開始します...")
     start_date = date.fromisoformat(start_str)
@@ -556,7 +556,7 @@ def add_continuous_schedules_logic(log, urls, contact, start_str, end_str):
             browser.close()
         log("\nすべての処理が完了しました。")
 
-def delete_schedules_logic(log, start_str, end_str, class_names_str):
+def delete_schedules_logic(log, page_instance, start_str, end_str, class_names_str):
     """ 連続日程削除のロジック """
     log("連続日程削除処理を開始します...")
     target_class_names = [name.strip() for name in class_names_str.strip().split('\n') if name.strip()]
@@ -594,7 +594,7 @@ def delete_schedules_logic(log, start_str, end_str, class_names_str):
             browser.close()
         log("\nすべての処理が完了しました。")
 
-def delete_custom_schedules_logic(log, schedules_text, class_names_str):
+def delete_custom_schedules_logic(log, page_instance, schedules_text, class_names_str):
     """個別日程で日程を削除するロジック"""
     log("個別日程による日程削除を開始します...")
     schedules = ScheduleHelper.parse_delete_schedules(schedules_text)
@@ -723,7 +723,7 @@ def main(page: ft.Page):
         set_add_running(True)
         def wrapped():
             try:
-                run_playwright_task(page, log_view, add_continuous_schedules_logic, url_input.value, contact_input.value, add_start_date.value, add_end_date.value)
+                run_playwright_task(page, log_column, add_continuous_schedules_logic, url_input.value, contact_input.value, add_start_date.value, add_end_date.value)
             finally:
                 set_add_running(False)
         run_in_thread(wrapped)
@@ -813,7 +813,7 @@ def main(page: ft.Page):
         set_delete_running(True)
         def wrapped():
             try:
-                run_playwright_task(page, log_view, delete_schedules_logic, delete_start_date.value, delete_end_date.value, class_names_input.value)
+                run_playwright_task(page, log_column, delete_schedules_logic, delete_start_date.value, delete_end_date.value, class_names_input.value)
             finally:
                 set_delete_running(False)
         run_in_thread(wrapped)
@@ -825,7 +825,7 @@ def main(page: ft.Page):
         set_delete_running(True)
         def wrapped():
             try:
-                run_playwright_task(page, log_view, delete_custom_schedules_logic, delete_custom_schedules_input.value, class_names_input.value)
+                run_playwright_task(page, log_column, delete_custom_schedules_logic, delete_custom_schedules_input.value, class_names_input.value)
             finally:
                 set_delete_running(False)
         run_in_thread(wrapped)
