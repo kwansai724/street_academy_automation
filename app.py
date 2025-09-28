@@ -67,7 +67,7 @@ class ScheduleHelper:
     
     @staticmethod
     def parse_custom_schedules(text):
-        """個別日程リストのテキストをパースして [(classdetailid, date, start, end, capacity, price, deadline, contact)] のリストにする"""
+        """個別日程リストのテキストをパースして [(class_name, classdetailid, date, start, end, capacity, price, deadline, contact)] のリストにする"""
         result = []
         lines = text.strip().splitlines()
         # ヘッダー行があればスキップ
@@ -79,11 +79,12 @@ class ScheduleHelper:
                 continue
             try:
                 parts = line.strip().split('\t')
-                if len(parts) != 7:
+                if len(parts) != 8:
                     continue
-                classdetailid, date_part, time_part, capacity_part, price_part, deadline_part, contact_part = parts
+                class_name_part, classdetailid, date_part, time_part, capacity_part, price_part, deadline_part, contact_part = parts
                 start_time, end_time = time_part.split('~')
                 result.append((
+                    class_name_part.strip(),
                     classdetailid.strip(),
                     date_part.strip(),
                     start_time.strip(),
@@ -335,40 +336,70 @@ def do_login(page_instance: ft.Page, status_text: ft.Text):
     except Exception as e:
         update_status(f"ログインに失敗またはタイムアウトしました: {e}", "red")
 
-def run_playwright_task(page_instance: ft.Page, log_text: ft.Text, task_func, *args):
+def run_playwright_task(page_instance: ft.Page, log_column: ft.Column, task_func, *args):
     """Playwrightタスクを別スレッドで実行するための共通ラッパー"""
-    def log(message):
-        log_text.value += message + "\n"
+    def log(message, color="black", weight=ft.FontWeight.NORMAL):
+        log_column.controls.append(
+            ft.Text(message, color=color, weight=weight, selectable=True, font_family="monospace", size=12)
+        )
         page_instance.update()
 
-    log_text.value = ""
+    log_column.controls.clear()
     page_instance.update()
 
     try:
-        task_func(log, *args)
+        task_func(log, page_instance, *args)
     except Exception as e:
         log(f"予期せぬエラーが発生しました: {e}")
         print(f"エラー詳細: {e}")
 
-def add_schedules_logic(log, schedules_text):
+def add_schedules_logic(log, page_instance, schedules_text):
     """個別日程で日程を追加するロジック"""
     log("個別日程による日程追加を開始します...")
     schedules = ScheduleHelper.parse_custom_schedules(schedules_text)
     if not schedules:
-        log("有効な日程が入力されていません。\n例: 123456\t2025-08-27\t14:00~15:30\t3\t5000\t1日前\t090-1234-5678")
+        log("有効な日程が入力されていません。\n例: 講座名\t123456\t2025-08-27\t14:00~15:30\t3\t5000\t1日前\t090-1234-5678")
         return
     
     log(f"処理対象の日程数: {len(schedules)}")
+    skipped_schedules = []
     
     try:
         playwright, browser, context = PlaywrightHelper.create_browser_context()
         page = context.new_page()
         
-        for schedule_index, (classdetailid, date_str, start_str, end_str, capacity_str, price_str, deadline_str, contact_str) in enumerate(schedules, 1):
+        for schedule_index, (class_name_from_tsv, classdetailid, date_str, start_str, end_str, capacity_str, price_str, deadline_str, contact_str) in enumerate(schedules, 1):
             url = f"https://www.street-academy.com/session_details/new_multi_session?classdetailid={classdetailid}"
             log(f"\n--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} (講座ID: {classdetailid}) を追加します ---")
             page.goto(url)
             expect(page.get_by_role("button", name="日程を複製する")).to_be_visible(timeout=30000)
+
+            # 講座名のチェック
+            try:
+                page_title_element = page.locator('p:has-text("『")')
+                expect(page_title_element).to_be_visible(timeout=10000)
+                class_name_on_page = page_title_element.inner_text().replace('『', '').replace('』', '').strip()
+                
+                if class_name_from_tsv != class_name_on_page:
+                    log(f"[警告] 講座名が一致しません。スキップします。")
+                    log(f"  - 入力した講座名: {class_name_from_tsv}")
+                    log(f"  - 日程追加画面の講座名: {class_name_on_page}")
+                    skipped_schedules.append({
+                        'date': date_str,
+                        'tsv_name': class_name_from_tsv,
+                        'page_name': class_name_on_page
+                    })
+                    continue
+                else:
+                    log("講座名の一致を確認しました。")
+            except Exception as e:
+                log(f"[エラー] 講座名のチェック中にエラーが発生しました: {e} スキップします。")
+                skipped_schedules.append({
+                    'date': date_str,
+                    'tsv_name': class_name_from_tsv,
+                    'page_name': '取得失敗'
+                })
+                continue
 
             # オンライン選択肢があれば選択
             online_radio_button = page.locator("#session_detail_multi_form_is_online_true")
@@ -437,6 +468,17 @@ def add_schedules_logic(log, schedules_text):
             expect(button1.or_(button2).first).to_be_visible(timeout=20000)
             log(f"--- 日程 {schedule_index}/{len(schedules)}: {date_str} {start_str}~{end_str} の日程追加が完了しました！ ---")
             time.sleep(3)
+
+        # 最後にスキップされた日程のサマリーをログに出力
+        if skipped_schedules:
+            log("\n" + "="*50, color="red", weight=ft.FontWeight.BOLD)
+            log("【警告】スキップされた日程があります", color="red", weight=ft.FontWeight.BOLD)
+            log("以下の日程は講座名が一致しなかったため、処理されませんでした：", color="red", weight=ft.FontWeight.BOLD)
+            for item in skipped_schedules:
+                log(f"- {item['date']}: {item['tsv_name']}", color="red", weight=ft.FontWeight.BOLD)
+            log("詳細は上記ログをご確認ください。", color="red", weight=ft.FontWeight.BOLD)
+            log("="*50, color="red", weight=ft.FontWeight.BOLD)
+
     except Exception as e:
         log(f"エラーが発生しました: {e}")
     finally:
@@ -657,11 +699,11 @@ def main(page: ft.Page):
 
     # --- 個別日程追加用UI ---
     custom_schedules_input = ft.TextField(
-        label="個別日程リスト (講座ID\t日付\t開始~終了\t定員\t料金\t締切\t連絡先)",
+        label="個別日程リスト (講座名\t講座ID\t日付\t開始~終了\t定員\t料金\t締切\t連絡先)",
         multiline=True,
         min_lines=5,
         width=600,
-        hint_text="講座ID\t日程\t時間\t定員\t受講料\t締め切り日時\t緊急連絡先\n123456\t2025-08-27\t14:00~15:30\t3\t5000\t1日前\t090-1234-5678",
+        hint_text="講座名\t講座ID\t日程\t時間\t定員\t受講料\t締め切り日時\t緊急連絡先\nMy講座\t123456\t2025-08-27\t14:00~15:30\t3\t5000\t1日前\t090-1234-5678",
         hint_style=ft.TextStyle(color="#bbbbbb")
     )
     add_custom_button = ft.ElevatedButton("個別日程追加", bgcolor="green", color="white")
@@ -693,7 +735,7 @@ def main(page: ft.Page):
         set_add_running(True)
         def wrapped():
             try:
-                run_playwright_task(page, log_view, add_schedules_logic, custom_schedules_input.value)
+                run_playwright_task(page, log_column, add_schedules_logic, custom_schedules_input.value)
             finally:
                 set_add_running(False)
         run_in_thread(wrapped)
@@ -814,9 +856,9 @@ def main(page: ft.Page):
     update_delete_form()
 
     # ログ表示用UI
-    log_view = ft.Text("", selectable=True, font_family="monospace", size=12)
+    log_column = ft.Column([], scroll=ft.ScrollMode.ADAPTIVE, expand=True, auto_scroll=True)
     log_container = ft.Container(
-        content=ft.Column([log_view], scroll=ft.ScrollMode.ADAPTIVE, expand=True),
+        content=log_column,
         border=ft.border.all(1, "grey"),
         padding=10,
         expand=True,
