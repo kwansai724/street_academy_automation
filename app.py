@@ -16,7 +16,7 @@ EMERGENCY_CONTACT = '090-1234-5678'
 HOURS_TO_ADD = list(range(8, 23))
 
 # ③：主催団体かどうかの定数
-IS_ORGANIZER = True  # Falseにすれば個人講師用URLになる
+IS_ORGANIZER = False  # True: 主催団体, False: 個人講師
 
 # 共通設定
 BASE_URL = "https://www.street-academy.com"
@@ -556,7 +556,7 @@ def add_continuous_schedules_logic(log, page_instance, urls, contact, start_str,
             browser.close()
         log("\nすべての処理が完了しました。")
 
-def delete_schedules_logic(log, page_instance, start_str, end_str, class_names_str):
+def delete_schedules_logic(log, page_instance, start_str, end_str, class_names_str, is_organizer):
     """ 連続日程削除のロジック """
     log("連続日程削除処理を開始します...")
     target_class_names = [name.strip() for name in class_names_str.strip().split('\n') if name.strip()]
@@ -575,7 +575,7 @@ def delete_schedules_logic(log, page_instance, start_str, end_str, class_names_s
         for single_date in daterange(start_date, end_date):
             log(f"\n--- {single_date.strftime('%Y-%m-%d')} の日程削除を開始します ---")
             date_param = URLHelper.format_date_param(single_date)
-            base_url = URLHelper.build_schedule_url(date_param)
+            base_url = URLHelper.build_schedule_url(date_param, is_organizer=is_organizer)
 
             # 共通化されたページング処理を使用
             log(f"アクセス中: {base_url}")
@@ -594,7 +594,7 @@ def delete_schedules_logic(log, page_instance, start_str, end_str, class_names_s
             browser.close()
         log("\nすべての処理が完了しました。")
 
-def delete_custom_schedules_logic(log, page_instance, schedules_text, class_names_str):
+def delete_custom_schedules_logic(log, page_instance, schedules_text, class_names_str, is_organizer):
     """個別日程で日程を削除するロジック"""
     log("個別日程による日程削除を開始します...")
     schedules = ScheduleHelper.parse_delete_schedules(schedules_text)
@@ -619,9 +619,7 @@ def delete_custom_schedules_logic(log, page_instance, schedules_text, class_name
             # 日付パラメータを作成
             target_date = date.fromisoformat(date_str)
             date_param = URLHelper.format_date_param(target_date)
-            base_url = URLHelper.build_schedule_url(date_param)
-            
-            found_schedule = False
+            base_url = URLHelper.build_schedule_url(date_param, is_organizer=is_organizer)
             
             # 共通化されたページング処理を使用
             log(f"アクセス中: {base_url}")
@@ -633,10 +631,6 @@ def delete_custom_schedules_logic(log, page_instance, schedules_text, class_name
             
             if not found_schedule:
                 log(f"講座名と開始時刻 {start_str} に一致する日程が見つかりませんでした。")
-
-            # 日程が見つからなかった場合のログ
-            if not found_schedule:
-                log(f"日程 {schedule_index}/{len(schedules)}: {date_str} {start_str} は見つかりませんでした。")
     except Exception as e:
         log(f"エラーが発生しました: {e}")
     finally:
@@ -765,6 +759,15 @@ def main(page: ft.Page):
     add_mode.on_change = update_add_form
     update_add_form()
 
+    # --- 対象（主催団体/個人）の選択ラジオボタン ---
+    org_mode = ft.RadioGroup(
+        content=ft.Row([
+            ft.Radio(value="teacher", label="個人"),
+            ft.Radio(value="organizer", label="主催団体")
+        ]),
+        value="organizer" if IS_ORGANIZER else "teacher"
+    )
+
     # --- 日程削除方式の選択ラジオボタン ---
     delete_mode = ft.RadioGroup(
         content=ft.Row([
@@ -813,7 +816,15 @@ def main(page: ft.Page):
         set_delete_running(True)
         def wrapped():
             try:
-                run_playwright_task(page, log_column, delete_schedules_logic, delete_start_date.value, delete_end_date.value, class_names_input.value)
+                run_playwright_task(
+                    page,
+                    log_column,
+                    delete_schedules_logic,
+                    delete_start_date.value,
+                    delete_end_date.value,
+                    class_names_input.value,
+                    (org_mode.value == "organizer")
+                )
             finally:
                 set_delete_running(False)
         run_in_thread(wrapped)
@@ -825,7 +836,14 @@ def main(page: ft.Page):
         set_delete_running(True)
         def wrapped():
             try:
-                run_playwright_task(page, log_column, delete_custom_schedules_logic, delete_custom_schedules_input.value, class_names_input.value)
+                run_playwright_task(
+                    page,
+                    log_column,
+                    delete_custom_schedules_logic,
+                    delete_custom_schedules_input.value,
+                    class_names_input.value,
+                    (org_mode.value == "organizer")
+                )
             finally:
                 set_delete_running(False)
         run_in_thread(wrapped)
@@ -863,10 +881,13 @@ def main(page: ft.Page):
         padding=10,
         expand=True,
     )
-    
+
     page.add(
         ft.Column([
             ft.Row([login_button, auth_status_text], alignment=ft.MainAxisAlignment.START),
+            ft.Divider(),
+            ft.Text("対象の選択", size=16, weight=ft.FontWeight.BOLD),
+            org_mode,
             ft.Divider(),
             ft.Text("日程の追加", size=20, weight=ft.FontWeight.BOLD),
             add_mode,
