@@ -128,12 +128,17 @@ class ScheduleHelper:
         return None
     
     @staticmethod
-    def find_matching_schedule(links, class_names, start_time):
+    def find_matching_schedule(links, class_names, start_time, excluded_texts=None):
         """指定された条件に一致する日程を探す"""
         for i in range(links.count()):
             try:
                 link = links.nth(i)
                 link_text = link.inner_text()
+                link_text_clean = link_text.strip().replace('\n', ' ')
+                
+                # すでにスキップ対象として記録されている場合は除外
+                if excluded_texts and link_text_clean in excluded_texts:
+                    continue
                 
                 # 講座名の一致を確認
                 if not any(class_name in link_text for class_name in class_names):
@@ -218,6 +223,7 @@ class ScheduleHelper:
         """指定された条件に一致する日程を探して削除する（ページング対応）"""
         found_any = False
         page_count = 0
+        skipped_texts = set()
         
         while page_count < max_pages:
             page_count += 1
@@ -244,15 +250,25 @@ class ScheduleHelper:
                     break
                 
                 # 削除対象の日程を探す
-                target_link = ScheduleHelper.find_matching_schedule(all_schedule_links, class_names, start_time)
+                target_link = ScheduleHelper.find_matching_schedule(all_schedule_links, class_names, start_time, skipped_texts)
                 
                 if target_link is not None:
                     # 削除処理を実行
+                    # 対象リンクのテキスト（クリーン）を事前に取得しておく（スキップ除外用）
+                    try:
+                        candidate_text_clean = target_link.inner_text().strip().replace('\n', ' ')
+                    except Exception:
+                        candidate_text_clean = None
+                    
                     if ScheduleHelper.delete_schedule(page, target_link, log_func):
                         found_any = True
                         continue
                     else:
-                        break
+                        # スキップ（予約者あり等）やエラーの場合でも同一ページ内の次候補を続行する
+                        if candidate_text_clean:
+                            skipped_texts.add(candidate_text_clean)
+                        # 次の候補を探すためループ継続
+                        continue
                 else:
                     # 削除対象が見つからない場合はこのページの処理を終了
                     break
